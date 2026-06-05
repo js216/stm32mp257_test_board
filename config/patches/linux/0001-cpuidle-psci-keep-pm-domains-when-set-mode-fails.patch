@@ -1,0 +1,24 @@
+Subject: [PATCH] cpuidle: psci: keep CPU PM domains when set-suspend-mode fails
+
+This board's secure firmware rejects PSCI_SET_SUSPEND_MODE (-95), and the
+kernel treats that as fatal and rolls back the CPU/cluster power domains,
+orphaning the SoC peripheral power-domain (st,stm32mp-pm-domain) and causing a
+fatal deferred-probe storm (console/mmc/eth never probe). The domains register
+fine and are all that's needed, so keep them when set-mode fails.
+
+--- a/drivers/cpuidle/cpuidle-psci-domain.c	2026-06-05 09:33:38.529186213 -0700
++++ b/drivers/cpuidle/cpuidle-psci-domain.c	2026-06-05 09:33:38.513186105 -0700
+@@ -174,8 +174,11 @@
+ 
+ 	/* let's try to enable OSI. */
+ 	ret = psci_set_osi_mode(use_osi);
+-	if (ret)
+-		goto remove_pd;
++	if (ret) {
++		pr_warn("psci: set %s mode failed (%d); keeping CPU PM domains\n",
++			use_osi ? "OSI" : "PC", ret);
++		ret = 0;
++	}
+ 
+ 	pr_info("Initialized CPU PM domain topology using %s mode\n",
+ 		use_osi ? "OSI" : "PC");

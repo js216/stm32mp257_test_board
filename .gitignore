@@ -3,3 +3,6 @@
 *.kicad_prl
 
 build
+
+config/rootfs-overlay/root/.ssh
+config/rootfs-overlay/etc/dropbear_ed25519_host_key

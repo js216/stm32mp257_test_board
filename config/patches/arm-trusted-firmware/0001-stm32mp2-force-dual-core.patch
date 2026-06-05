@@ -1,0 +1,18 @@
+Subject: [PATCH] plat: stm32mp2: force dual-core on STM32MP257F-DK
+
+stm32mp_is_single_core() misreads the OTP part number on the USB serial-boot
+(DFU) path and reports the dual-core MP257 as single-core, so PSCI refuses to
+start CPU1 (kernel: 'psci: failed to boot CPU1 (-95)'), breaking the power-
+domain tree. Force the MP251 single-core case to false for this board.
+
+--- a/plat/st/stm32mp2/stm32mp2_private.c	2026-06-05 06:09:41.414106105 -0700
++++ b/plat/st/stm32mp2/stm32mp2_private.c	2026-06-05 06:09:41.418106134 -0700
+@@ -518,7 +518,7 @@
+ 	case STM32MP251D_PART_NB:
+ 	case STM32MP251F_PART_NB:
+ #endif /* STM32MP25 */
+-		single_core = true;
++		single_core = false; /* STM32MP257F-DK is dual-core: OTP part-number read is unreliable on USB serial-boot and can misdetect single-core, blocking CPU1 */
+ 		break;
+ 	default:
+ 		break;

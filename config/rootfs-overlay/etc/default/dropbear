@@ -1,0 +1,1 @@
+DROPBEAR_ARGS="-r /etc/dropbear_ed25519_host_key"
