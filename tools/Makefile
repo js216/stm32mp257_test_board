@@ -22,12 +22,14 @@ LDFLAGS  := -L$(SYSROOT) \
             -Wl,--unresolved-symbols=ignore-in-shared-libs
 LDLIBS   := -lEGL -lGLESv2 -lgbm -ldrm -lm
 
-BINS     := $(BUILD)/cube $(BUILD)/fft
+# cube + fft = GPU (GLES2) demos; fft_cpu = software (DRM dumb buffer, no GPU/GL).
+BINS     := $(BUILD)/cube $(BUILD)/fft $(BUILD)/fft_cpu
 
 .PHONY: all clean
 all: $(BINS)
 
 $(BUILD)/fft: LDLIBS += -lfftw3f
+$(BUILD)/fft_cpu: LDLIBS := -ldrm -lfftw3f -lm
 
 $(BUILD)/%: %.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< $(LDFLAGS) $(LDLIBS) -o $@
