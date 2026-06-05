@@ -1,0 +1,7 @@
+[submodule "buildroot"]
+	path = buildroot
+	url = https://gitlab.com/buildroot.org/buildroot.git
+[submodule "buildroot-external-st"]
+	path = buildroot-external-st
+	url = https://github.com/bootlin/buildroot-external-st.git
+	branch = st/2025.02.5
