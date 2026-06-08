@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 7 Jun 2026 15:22:00 -0700
+Subject: [PATCH] stm32mp257-dk: expose RCC resource 59 to Linux
+
+RCC resource 59 is the XBAR/flexgen resource backing GPU. Expose this
+single resource after resource 58 has been proven on hardware.
+
+Signed-off-by: Codex <codex@local>
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index c8d46775..e38b242b 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -763,5 +763,5 @@
+ 		RIFPROT(RIF_RCC_RESOURCE(57), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(RIF_RCC_RESOURCE(58), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+-		RIFPROT(RIF_RCC_RESOURCE(59), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(RIF_RCC_RESOURCE(59), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(RIF_RCC_RESOURCE(60), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
+ 		RIFPROT(RIF_RCC_RESOURCE(61), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
+-- 
+2.39.5

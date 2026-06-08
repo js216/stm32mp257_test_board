@@ -1,0 +1,82 @@
+From 4444444444444444444444444444444444444444 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 8 Jun 2026 13:35:00 -0700
+Subject: [PATCH] stm32mp257-dk: unlock EXTI2 IWDG1 reset in USB firmware
+
+Expose the EXTI2 firewall resource for the IWDG1 reset signal to
+non-secure Linux before handing off from the USB-programmer BL31.
+Also leave the EXTI2 CPU1 mask register CID filter disabled, matching
+the Linux-side access path used to program C1IMR registers.
+
+Signed-off-by: Codex <codex@local>
+---
+ plat/st/stm32mp2/bl31_plat_setup.c | 47 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/plat/st/stm32mp2/bl31_plat_setup.c b/plat/st/stm32mp2/bl31_plat_setup.c
+index 222222222222..333333333333 100644
+--- a/plat/st/stm32mp2/bl31_plat_setup.c
++++ b/plat/st/stm32mp2/bl31_plat_setup.c
+@@ -164,6 +164,51 @@ static void stm32mp25_tamp_unlock_resource2(const char *name)
+ 	stm32mp25_tamp_unlock_resource(2U, STM32MP25_TAMP_RES2_SEC,
+ 				       STM32MP25_TAMP_RES2_PRIV, name);
+ }
++
++#define STM32MP25_EXTI_SECCFGR(id) (U(0x014) + U(0x20) * ((id) / 32U))
++#define STM32MP25_EXTI_PRIVCFGR(id) (U(0x018) + U(0x20) * ((id) / 32U))
++#define STM32MP25_EXTI_ENCIDCFGR(id) (U(0x180) + U(0x4) * (id))
++#define STM32MP25_EXTI_CMCIDCFGR(cpu) (U(0x300) + U(0x4) * ((cpu) - 1U))
++#define STM32MP25_EXTI_LOCKR U(0x070)
++#define STM32MP25_EXTI_LOCKR_GLOCK BIT_32(0)
++
++static void stm32mp25_exti2_unlock_resource(unsigned int id, const char *name)
++{
++	uint32_t bit = BIT_32(id % 32U);
++	uintptr_t seccfgr = STM32MP_EXTI2_BASE + STM32MP25_EXTI_SECCFGR(id);
++	uintptr_t privcfgr = STM32MP_EXTI2_BASE + STM32MP25_EXTI_PRIVCFGR(id);
++	uintptr_t cidcfgr = STM32MP_EXTI2_BASE + STM32MP25_EXTI_ENCIDCFGR(id);
++	uint32_t sec = mmio_read_32(seccfgr);
++	uint32_t priv = mmio_read_32(privcfgr);
++	uint32_t cid = mmio_read_32(cidcfgr);
++
++	NOTICE("EXTI2 RIF: %s before sec=%x priv=%x cid=%x\n",
++	       name, sec, priv, cid);
++
++	if ((mmio_read_32(STM32MP_EXTI2_BASE + STM32MP25_EXTI_LOCKR) &
++	     STM32MP25_EXTI_LOCKR_GLOCK) != 0U) {
++		WARN("EXTI2 RIF: %s globally locked, cannot expose to non-secure world\n",
++		     name);
++		return;
++	}
++
++	mmio_clrbits_32(seccfgr, bit);
++	mmio_clrbits_32(privcfgr, bit);
++	mmio_write_32(cidcfgr, 0U);
++
++	NOTICE("EXTI2 RIF: %s after sec=%x priv=%x cid=%x\n",
++	       name, mmio_read_32(seccfgr), mmio_read_32(privcfgr),
++	       mmio_read_32(cidcfgr));
++}
++
++static void stm32mp25_exti2_unlock_cpu_mask(unsigned int cpu, const char *name)
++{
++	uintptr_t cmcidcfgr = STM32MP_EXTI2_BASE + STM32MP25_EXTI_CMCIDCFGR(cpu);
++
++	NOTICE("EXTI2 RIF: %s before cmcid=%x\n", name, mmio_read_32(cmcidcfgr));
++	mmio_write_32(cmcidcfgr, 0U);
++	NOTICE("EXTI2 RIF: %s after cmcid=%x\n", name, mmio_read_32(cmcidcfgr));
++}
+ #endif
+ 
+ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
+@@ -374,6 +419,8 @@ entry_point_info_t *bl31_plat_get_next_image_ep_info(unsigned int type)
+ 		stm32mp25_tamp_unlock_resource0("TAMP_RESOURCE_0");
+ 		stm32mp25_tamp_unlock_resource1("TAMP_RESOURCE_1");
+ 		stm32mp25_tamp_unlock_resource2("TAMP_RESOURCE_2");
++		stm32mp25_exti2_unlock_resource(47U, "IWDG1_RESET");
++		stm32mp25_exti2_unlock_cpu_mask(1U, "CPU1_MASK");
+ #endif
+ 		next_image_info = &bl33_image_ep_info;
+ 		break;
+-- 
+2.39.5

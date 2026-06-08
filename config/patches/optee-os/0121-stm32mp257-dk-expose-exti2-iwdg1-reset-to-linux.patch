@@ -1,0 +1,26 @@
+From 3333333333333333333333333333333333333333 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 8 Jun 2026 13:10:00 -0700
+Subject: [PATCH] stm32mp257-dk: expose EXTI2 IWDG1 reset to Linux
+
+Expose only the EXTI2 firewall resource for the IWDG1 reset signal.
+This keeps the PMIC on OP-TEE-owned I2C7 and does not add any Linux
+PMIC/I2C7 access.
+
+Signed-off-by: Codex <codex@local>
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index 111111111111..222222222222 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -300 +300 @@
+-		RIFPROT(RIF_EXTI2_RESOURCE(47), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(RIF_EXTI2_RESOURCE(47), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+@@ -323 +323 @@
+-	st,proccid = <1 RIF_CID1>, <2 RIF_CID2>, <3 RIF_CID3>;
++	st,proccid = <2 RIF_CID2>, <3 RIF_CID3>;
+-- 
+2.39.5

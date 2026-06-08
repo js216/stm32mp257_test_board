@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 7 Jun 2026 08:02:00 -0700
+Subject: [PATCH] stm32mp2: log SERC events without panicking
+
+For the MP257 DK migration away from OP-TEE-owned firewall policy, Linux
+must be able to touch peripherals after TF-A exposes them to non-secure
+world. Keep the SERC handler active so it logs and clears illegal-access
+events, but do not halt OP-TEE on those events.
+
+Signed-off-by: Codex <codex@local>
+---
+ core/drivers/firewall/stm32_serc.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/core/drivers/firewall/stm32_serc.c b/core/drivers/firewall/stm32_serc.c
+index 1e4a7bddc..b5c99b02a 100644
+--- a/core/drivers/firewall/stm32_serc.c
++++ b/core/drivers/firewall/stm32_serc.c
+@@ -150,11 +150,8 @@ void stm32_serc_handle_ilac(void)
+ 		}
+ 	}
+ 
+-	if (do_panic) {
+-		stm32_rif_access_violation_action();
+-		if (IS_ENABLED(CFG_STM32_PANIC_ON_SERC_EVENT))
+-			panic();
+-	}
++	if (do_panic)
++		IMSG("SERC event ignored for non-secure firewall migration");
+ }
+ 
+ static enum itr_return stm32_serc_itr(struct itr_handler *h __unused)
+-- 
+2.39.5

@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 7 Jun 2026 14:52:00 -0700
+Subject: [PATCH] stm32mp257-dk: expose RCC resources 50-51 to Linux
+
+RCC resource 50 is the XBAR/flexgen resource backing ck_ker_fmc,
+and resource 51 backs ck_ker_sdmmc1.
+TF-A exposes it as non-secure, but OP-TEE's board RIF policy was
+reapplying privileged/semaphore access before Linux booted.
+
+Make only this resource non-privileged and semaphore-free so Linux can
+touch the RCC register map while the migration away from OP-TEE-owned
+firewall policy proceeds one resource at a time.
+
+Signed-off-by: Codex <codex@local>
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index 6b575ba31..be570854 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -756,4 +756,4 @@
+-		RIFPROT(RIF_RCC_RESOURCE(50), EMPTY_SEMWL, RIF_UNLOCK, RIF_NSEC, RIF_PRIV, RIF_UNUSED, RIF_SEM_EN, RIF_CFEN)
+-		RIFPROT(RIF_RCC_RESOURCE(51), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(RIF_RCC_RESOURCE(50), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
++		RIFPROT(RIF_RCC_RESOURCE(51), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(RIF_RCC_RESOURCE(52), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
+ 		RIFPROT(RIF_RCC_RESOURCE(53), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
+-- 
+2.39.5

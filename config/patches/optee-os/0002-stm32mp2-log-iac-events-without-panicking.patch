@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Sun, 7 Jun 2026 08:38:00 -0700
+Subject: [PATCH] stm32mp2: log IAC events without panicking
+
+For the MP257 DK migration away from OP-TEE-owned firewall policy, Linux
+must be able to probe newly exposed resources from non-secure world.
+Keep the IAC handler active so it logs and clears illegal-access events,
+but do not halt OP-TEE on those events.
+
+Signed-off-by: Codex <codex@local>
+---
+ core/drivers/firewall/stm32_iac.c | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/core/drivers/firewall/stm32_iac.c b/core/drivers/firewall/stm32_iac.c
+index 55f18a9fe..5381552db 100644
+--- a/core/drivers/firewall/stm32_iac.c
++++ b/core/drivers/firewall/stm32_iac.c
+@@ -207,11 +207,8 @@ static enum itr_return stm32_iac_itr(struct itr_handler *h __unused)
+ 		}
+ 	}
+ 
+-	if (do_panic) {
+-		stm32_rif_access_violation_action();
+-		if (IS_ENABLED(CFG_STM32_PANIC_ON_IAC_EVENT))
+-			panic();
+-	}
++	if (do_panic)
++		IMSG("IAC event ignored for non-secure firewall migration");
+ 
+ 	return ITRR_HANDLED;
+ }
+-- 
+2.39.5

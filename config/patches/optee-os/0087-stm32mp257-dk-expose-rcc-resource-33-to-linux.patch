@@ -1,0 +1,19 @@
+From 1111111111111111111111111111111111111111 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 8 Jun 2026 06:42:00 -0700
+Subject: [PATCH] stm32mp257-dk: expose RCC resource 33 to Linux
+
+Signed-off-by: Codex <codex@local>
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index 111111111111..222222222222 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -739 +739 @@
+-		RIFPROT(RIF_RCC_RESOURCE(33), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(RIF_RCC_RESOURCE(33), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+-- 
+2.39.5

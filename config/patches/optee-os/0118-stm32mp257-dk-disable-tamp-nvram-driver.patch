@@ -1,0 +1,22 @@
+From 2222222222222222222222222222222222222222 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 8 Jun 2026 12:20:00 -0700
+Subject: [PATCH] stm32mp257-dk: disable TAMP NVRAM driver
+
+TAMP NVRAM is backed by the TAMP firewall resources. Disable this OP-TEE
+consumer before migrating individual TAMP resources to non-secure Linux.
+
+Signed-off-by: Codex <codex@local>
+---
+ core/arch/arm/plat-stm32mp2/conf.mk | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/arch/arm/plat-stm32mp2/conf.mk b/core/arch/arm/plat-stm32mp2/conf.mk
+index 111111111111..222222222222 100644
+--- a/core/arch/arm/plat-stm32mp2/conf.mk
++++ b/core/arch/arm/plat-stm32mp2/conf.mk
+@@ -336 +336 @@
+-CFG_STM32_TAMP_NVRAM ?= y
++CFG_STM32_TAMP_NVRAM ?= n
+-- 
+2.39.5
