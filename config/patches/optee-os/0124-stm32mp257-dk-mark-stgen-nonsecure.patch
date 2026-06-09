@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: agent3 <agent3@localhost>
+Date: Tue, 9 Jun 2026 14:40:00 -0700
+Subject: [PATCH] stm32mp257-dk: mark STGEN non-secure
+
+The live RISC_SECCFGR2 on the running board reads STGEN (RIFSC id 73)
+as non-secure even though this policy line still claims RIF_SEC with
+RIF_LOCK, so the entry was never effective. Align the policy with the
+observed hand-off state: non-secure, unlocked, no CID filtering, like
+every other resource already migrated to Linux.
+
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index 111111111..222222222 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -77 +77 @@
+-		RIFPROT(STM32MP25_RIFSC_STGEN_ID, RIF_UNUSED, RIF_LOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(STM32MP25_RIFSC_STGEN_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+--
+2.43.0

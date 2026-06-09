@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: agent3 <agent3@localhost>
+Date: Tue, 9 Jun 2026 13:45:00 -0700
+Subject: [PATCH] stm32mp257-dk: share I2C7 with Linux
+
+I2C7 is the PMIC bus. Make its RIFSC entry non-secure so Linux can
+access the controller directly in later PMIC migration steps, but keep
+OP-TEE able to probe and use the existing PMIC/regulator path during the
+transition.
+
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 2 +-
+ core/drivers/firewall/stm32_rifsc.c                 | 5 +++++
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index 111111111..222222222 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -55,7 +55,7 @@
+ 		RIFPROT(STM32MP25_RIFSC_I2C4_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(STM32MP25_RIFSC_I2C5_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(STM32MP25_RIFSC_I2C6_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+-		RIFPROT(STM32MP25_RIFSC_I2C7_ID, RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(STM32MP25_RIFSC_I2C7_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(STM32MP25_RIFSC_I2C8_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(STM32MP25_RIFSC_SAI1_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(STM32MP25_RIFSC_SAI2_ID, RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+diff --git a/core/drivers/firewall/stm32_rifsc.c b/core/drivers/firewall/stm32_rifsc.c
+index 111111111..222222222 100644
+--- a/core/drivers/firewall/stm32_rifsc.c
++++ b/core/drivers/firewall/stm32_rifsc.c
+@@ -810,5 +810,12 @@ static TEE_Result stm32_rifsc_acquire_access(struct firewall_query *firewall)
+ 	seccfgr = io_read32(rifsc_base + _RIFSC_RISC_SECCFGR0 + 0x4 * reg_id);
+-	if (!(seccfgr & BIT(periph_offset)))
++	if (!(seccfgr & BIT(periph_offset))) {
++		/*
++		 * I2C7 is deliberately shared while OP-TEE still owns the PMIC.
++		 */
++		if (resource_id == 47)
++			return TEE_SUCCESS;
++
+ 		return TEE_ERROR_ACCESS_DENIED;
++	}
+ 
+ 	/* Only check CID attributes */
+-- 
+2.43.0
