@@ -322,30 +322,44 @@
 					scmi_vddio1: regulator@0 {
 						reg = <VOLTD_SCMI_VDDIO1>;
 						regulator-name = "vddio1";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 					scmi_vddio2: regulator@1 {
 						reg = <VOLTD_SCMI_VDDIO2>;
 						regulator-name = "vddio2";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 					scmi_vddio3: regulator@2 {
 						reg = <VOLTD_SCMI_VDDIO3>;
 						regulator-name = "vddio3";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 					scmi_vddio4: regulator@3 {
 						reg = <VOLTD_SCMI_VDDIO4>;
 						regulator-name = "vddio4";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 					scmi_vdd33ucpd: regulator@5 {
 						reg = <VOLTD_SCMI_UCPD>;
 						regulator-name = "vdd33ucpd";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 					scmi_vdda18adc: regulator@7 {
 						reg = <VOLTD_SCMI_ADC>;
 						regulator-name = "vdda18adc";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 					scmi_vddcpu: regulator@a {
 						reg = <VOLTD_SCMI_STPMIC2_BUCK1>;
 						regulator-name = "vddcpu";
+						regulator-boot-on;
+						regulator-always-on;
 					};
 				};
 			};
@@ -2140,8 +2154,8 @@
 				compatible = "st,stm32mp1-iwdg";
 				reg = <0x44010000 0x400>;
 				interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
-				clocks = <&rcc CK_BUS_IWDG1>, <&rcc LSI_CK>;
-				clock-names = "pclk", "lsi";
+				clocks = <&clk_lsi>, <&rcc CK_BUS_IWDG1>;
+				clock-names = "lsi", "pclk";
 				access-controllers = <&rifsc 98>;
 				status = "disabled";
 			};
@@ -2935,7 +2949,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x0 0x400>;
-				clocks = <&rcc CK_BUS_GPIOA>;
+				clocks = <&scmi_clk CK_SCMI_GPIOA>;
 				st,bank-name = "GPIOA";
 				status = "disabled";
 			};
@@ -2946,7 +2960,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x10000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOB>;
+				clocks = <&scmi_clk CK_SCMI_GPIOB>;
 				st,bank-name = "GPIOB";
 				status = "disabled";
 			};
@@ -2957,7 +2971,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x20000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOC>;
+				clocks = <&scmi_clk CK_SCMI_GPIOC>;
 				st,bank-name = "GPIOC";
 				status = "disabled";
 			};
@@ -2968,7 +2982,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x30000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOD>;
+				clocks = <&scmi_clk CK_SCMI_GPIOD>;
 				st,bank-name = "GPIOD";
 				status = "disabled";
 			};
@@ -2979,7 +2993,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x40000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOE>;
+				clocks = <&scmi_clk CK_SCMI_GPIOE>;
 				st,bank-name = "GPIOE";
 				status = "disabled";
 			};
@@ -2990,7 +3004,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x50000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOF>;
+				clocks = <&scmi_clk CK_SCMI_GPIOF>;
 				st,bank-name = "GPIOF";
 				status = "disabled";
 			};
@@ -3001,7 +3015,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x60000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOG>;
+				clocks = <&scmi_clk CK_SCMI_GPIOG>;
 				st,bank-name = "GPIOG";
 				status = "disabled";
 			};
@@ -3012,7 +3026,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x70000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOH>;
+				clocks = <&scmi_clk CK_SCMI_GPIOH>;
 				st,bank-name = "GPIOH";
 				status = "disabled";
 			};
@@ -3023,7 +3037,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x80000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOI>;
+				clocks = <&scmi_clk CK_SCMI_GPIOI>;
 				st,bank-name = "GPIOI";
 				status = "disabled";
 			};
@@ -3034,7 +3048,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0x90000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOJ>;
+				clocks = <&scmi_clk CK_SCMI_GPIOJ>;
 				st,bank-name = "GPIOJ";
 				status = "disabled";
 			};
@@ -3045,7 +3059,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0xa0000 0x400>;
-				clocks = <&rcc CK_BUS_GPIOK>;
+				clocks = <&scmi_clk CK_SCMI_GPIOK>;
 				st,bank-name = "GPIOK";
 				status = "disabled";
 			};
@@ -3124,7 +3138,7 @@
 				interrupt-controller;
 				#interrupt-cells = <2>;
 				reg = <0 0x400>;
-				clocks = <&rcc CK_BUS_GPIOZ>;
+				clocks = <&scmi_clk CK_SCMI_GPIOZ>;
 				st,bank-name = "GPIOZ";
 				st,bank-ioport = <11>;
 				status = "disabled";

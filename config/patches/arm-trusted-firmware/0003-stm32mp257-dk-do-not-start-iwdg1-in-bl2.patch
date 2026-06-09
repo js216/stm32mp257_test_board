@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Mon, 8 Jun 2026 19:06:00 -0700
+Subject: [PATCH] stm32mp257-dk: do not start IWDG1 in BL2
+
+IWDG1 is being migrated out of the secure-world watchdog service. Leave
+the peripheral unstarted by TF-A so OP-TEE does not need to service it and
+Linux can own the non-secure peripheral directly.
+
+Signed-off-by: Codex <codex@local>
+---
+ fdts/stm32mp257f-dk.dts | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/fdts/stm32mp257f-dk.dts b/fdts/stm32mp257f-dk.dts
+index 7332bbfb02..8f9c6a1c0b 100644
+--- a/fdts/stm32mp257f-dk.dts
++++ b/fdts/stm32mp257f-dk.dts
+@@ -162,7 +162,8 @@
+ 
+ &iwdg1 {
+ 	timeout-sec = <32>;
+-	status = "okay";
++	status = "disabled";
++	/delete-property/ timeout-sec;
+ };
+ 
+ &pwr {
+-- 
+2.43.0
+

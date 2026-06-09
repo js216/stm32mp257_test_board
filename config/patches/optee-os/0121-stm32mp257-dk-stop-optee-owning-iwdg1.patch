@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jk <jk@localhost>
+Date: Mon, 8 Jun 2026 18:22:00 -0700
+Subject: [PATCH] stm32mp257-dk: stop OP-TEE owning IWDG1
+
+---
+ core/arch/arm/dts/stm32mp257f-dk.dts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk.dts b/core/arch/arm/dts/stm32mp257f-dk.dts
+index 111111111..222222222 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk.dts
++++ b/core/arch/arm/dts/stm32mp257f-dk.dts
+@@ -318,8 +318,8 @@
+ };
+ 
+ &iwdg1 {
+-	timeout-sec = <32>;
+-	status = "okay";
++	status = "disabled";
++	/delete-property/ timeout-sec;
+ };
+ 
+ &m33_rproc {
+-- 
+2.43.0
+
