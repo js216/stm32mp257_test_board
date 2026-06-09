@@ -1,0 +1,151 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Codex <codex@local>
+Date: Tue, 9 Jun 2026 00:00:00 -0700
+Subject: [PATCH] clk: stm32mp25: export GPIO and IPCC2 RCC clocks
+
+The driver already defines the clock-summary gate objects for GPIOA..GPIOZ
+and IPCC2, but the device-tree clock provider table does not expose the
+corresponding clock IDs. This makes native RCC users fail with -ENOENT and
+forces those consumers to keep using SCMI clocks.
+
+Export the same gates that OP-TEE exposes. The gate bits match the RCC
+configuration registers documented in RM0457.
+
+Signed-off-by: Codex <codex@local>
+---
+ drivers/clk/stm32/clk-stm32mp25.c | 106 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 106 insertions(+)
+
+diff --git a/drivers/clk/stm32/clk-stm32mp25.c b/drivers/clk/stm32/clk-stm32mp25.c
+index 09f5b41540cb..1731135da4d5 100644
+--- a/drivers/clk/stm32/clk-stm32mp25.c
++++ b/drivers/clk/stm32/clk-stm32mp25.c
+@@ -42,6 +42,19 @@
+ #define STM32MP25_RIFRCC_DBG_ID		73
+ #define STM32MP25_RIFRCC_IS2M_ID	107
+ #define STM32MP25_RIFRCC_MCO1_ID	108
++#define STM32MP25_RIFRCC_IPCC2_ID	88
++#define STM32MP25_RIFRCC_GPIOA_ID	90
++#define STM32MP25_RIFRCC_GPIOB_ID	91
++#define STM32MP25_RIFRCC_GPIOC_ID	92
++#define STM32MP25_RIFRCC_GPIOD_ID	93
++#define STM32MP25_RIFRCC_GPIOE_ID	94
++#define STM32MP25_RIFRCC_GPIOF_ID	95
++#define STM32MP25_RIFRCC_GPIOG_ID	96
++#define STM32MP25_RIFRCC_GPIOH_ID	97
++#define STM32MP25_RIFRCC_GPIOI_ID	98
++#define STM32MP25_RIFRCC_GPIOJ_ID	99
++#define STM32MP25_RIFRCC_GPIOK_ID	100
++#define STM32MP25_RIFRCC_GPIOZ_ID	101
+ #define STM32MP25_RIFRCC_MCO2_ID	109
+ #define STM32MP25_RIFRCC_OSPI1_ID	110
+ #define STM32MP25_RIFRCC_OSPI2_ID	111
+@@ -1227,6 +1240,84 @@ static struct clk_stm32_gate ck_icn_p_is2m = {
+ 	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_is2m", ICN_APB3, &clk_stm32_gate_ops, 0),
+ };
+ 
++/* GPIO and IPCC2 */
++static struct clk_stm32_gate ck_icn_p_ipcc2 = {
++	.gate_id = GATE_IPCC2,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_ipcc2", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_ipcc2_am = {
++	.gate_id = GATE_IPCC2AM,
++	.hw.init = CLK_HW_INIT_HW("ck_icn_p_ipcc2_am", &ck_icn_p_ipcc2.hw,
++				  &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioa = {
++	.gate_id = GATE_GPIOA,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioa", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiob = {
++	.gate_id = GATE_GPIOB,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiob", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioc = {
++	.gate_id = GATE_GPIOC,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioc", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiod = {
++	.gate_id = GATE_GPIOD,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiod", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioe = {
++	.gate_id = GATE_GPIOE,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioe", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiof = {
++	.gate_id = GATE_GPIOF,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiof", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiog = {
++	.gate_id = GATE_GPIOG,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiog", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioh = {
++	.gate_id = GATE_GPIOH,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioh", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioi = {
++	.gate_id = GATE_GPIOI,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioi", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioj = {
++	.gate_id = GATE_GPIOJ,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioj", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiok = {
++	.gate_id = GATE_GPIOK,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiok", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioz = {
++	.gate_id = GATE_GPIOZ,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioz", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioz_am = {
++	.gate_id = GATE_GPIOZAM,
++	.hw.init = CLK_HW_INIT_HW("ck_icn_p_gpioz_am", &ck_icn_p_gpioz.hw,
++				  &clk_stm32_gate_ops, 0),
++};
++
+ /* IWDG */
+ static struct clk_stm32_gate ck_icn_p_iwdg1 = {
+ 	.gate_id = GATE_IWDG1,
+@@ -2004,6 +2017,21 @@ static const struct clock_config stm32mp25_clock_cfg[] = {
+ 	STM32_GATE_CFG(CK_BUS_CRYP2, ck_icn_p_cryp2, SEC_RIFSC(97)),
+ 	STM32_GATE_CFG(CK_BUS_SAES, ck_icn_p_saes, SEC_RIFSC(94)),
+ 	STM32_GATE_CFG(CK_BUS_PKA, ck_icn_p_pka, SEC_RIFSC(93)),
++	STM32_GATE_CFG(CK_BUS_IPCC2, ck_icn_p_ipcc2, SEC_RIFRCC(IPCC2)),
++	STM32_GATE_CFG(CK_IPCC2_AM, ck_icn_p_ipcc2_am, SEC_RIFRCC(IPCC2)),
++	STM32_GATE_CFG(CK_BUS_GPIOA, ck_icn_p_gpioa, SEC_RIFRCC(GPIOA)),
++	STM32_GATE_CFG(CK_BUS_GPIOB, ck_icn_p_gpiob, SEC_RIFRCC(GPIOB)),
++	STM32_GATE_CFG(CK_BUS_GPIOC, ck_icn_p_gpioc, SEC_RIFRCC(GPIOC)),
++	STM32_GATE_CFG(CK_BUS_GPIOD, ck_icn_p_gpiod, SEC_RIFRCC(GPIOD)),
++	STM32_GATE_CFG(CK_BUS_GPIOE, ck_icn_p_gpioe, SEC_RIFRCC(GPIOE)),
++	STM32_GATE_CFG(CK_BUS_GPIOF, ck_icn_p_gpiof, SEC_RIFRCC(GPIOF)),
++	STM32_GATE_CFG(CK_BUS_GPIOG, ck_icn_p_gpiog, SEC_RIFRCC(GPIOG)),
++	STM32_GATE_CFG(CK_BUS_GPIOH, ck_icn_p_gpioh, SEC_RIFRCC(GPIOH)),
++	STM32_GATE_CFG(CK_BUS_GPIOI, ck_icn_p_gpioi, SEC_RIFRCC(GPIOI)),
++	STM32_GATE_CFG(CK_BUS_GPIOJ, ck_icn_p_gpioj, SEC_RIFRCC(GPIOJ)),
++	STM32_GATE_CFG(CK_BUS_GPIOK, ck_icn_p_gpiok, SEC_RIFRCC(GPIOK)),
++	STM32_GATE_CFG(CK_BUS_GPIOZ, ck_icn_p_gpioz, SEC_RIFRCC(GPIOZ)),
++	STM32_GATE_CFG(CK_GPIOZ_AM, ck_icn_p_gpioz_am, SEC_RIFRCC(GPIOZ)),
+ 	STM32_GATE_CFG(CK_BUS_ADF1, ck_icn_p_adf1, SEC_RIFSC(55)),
+ 	STM32_GATE_CFG(CK_BUS_SPI8, ck_icn_p_spi8, SEC_RIFSC(29)),
+ 	STM32_GATE_CFG(CK_BUS_LPUART1, ck_icn_p_lpuart1, SEC_RIFSC(40)),
+-- 
+2.39.5
