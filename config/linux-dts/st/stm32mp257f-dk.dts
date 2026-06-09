@@ -100,6 +100,13 @@
 			status = "okay";
 		};
 
+		button-user-3 {
+			label = "User-3";
+			linux,code = <BTN_3>;
+			gpios = <&gpioz 2 GPIO_ACTIVE_HIGH>;
+			status = "okay";
+		};
+
 		button-wake-up {
 			label = "wake-up";
 			linux,code = <KEY_WAKEUP>;
@@ -647,6 +654,10 @@
 			};
 		};
 	};
+};
+
+&rng {
+	status = "okay";
 };
 
 &rtc {
