@@ -2825,6 +2825,10 @@
 		pwr: syscon@44210000 {
 			compatible = "st,stm32mp25-pwr", "syscon";
 			reg = <0x44210000 0x0400>;
+			interrupts = <GIC_SPI 140 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-controller;
+			#interrupt-cells = <3>;
+			st,wakeup-pins = <&gpioa 0 GPIO_ACTIVE_HIGH>;
 		};
 
 		exti1: interrupt-controller@44220000 {

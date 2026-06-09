@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: agent3 <agent3@localhost>
+Date: Tue, 9 Jun 2026 10:05:00 -0700
+Subject: [PATCH] stm32mp257-dk: expose WKUP1 PA0 to Linux
+
+button-wake-up uses WKUP1 on PA0. The PWR WIO1 and EXTI1 WKUP1
+resources are already exposed to the non-secure world in this board
+handoff; expose the GPIOA pin RIF entry too so Linux can own the native
+PWR wake interrupt path after access is proven.
+
+---
+ core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+index 111111111..222222222 100644
+--- a/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
++++ b/core/arch/arm/dts/stm32mp257f-dk-ca35tdcid-rif.dtsi
+@@ -325,7 +325,7 @@
+ 
+ &gpioa {
+ 	st,protreg = <
+-		RIFPROT(RIF_IOPORT_PIN(0), RIF_UNUSED, RIF_UNLOCK, RIF_SEC, RIF_PRIV, RIF_CID1, RIF_SEM_DIS, RIF_CFEN)
++		RIFPROT(RIF_IOPORT_PIN(0), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(RIF_IOPORT_PIN(1), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(RIF_IOPORT_PIN(2), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+ 		RIFPROT(RIF_IOPORT_PIN(3), RIF_UNUSED, RIF_UNLOCK, RIF_NSEC, RIF_NPRIV, RIF_UNUSED, RIF_SEM_DIS, RIF_CFDIS)
+-- 
+2.43.0
+
