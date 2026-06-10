@@ -29,6 +29,7 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+		bootargs = "root=PARTUUID=b26967be-18fb-40fe-9d9b-ae035fc4a1c5 rootwait rw console=ttySTM0,115200n8 clk_ignore_unused";
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
@@ -398,7 +399,11 @@
 &dsi {
 	vdd-supply =  <&scmi_vddcore>;
 	vdda18-supply = <&scmi_v1v8>;
-	status = "okay";
+	/* HDMI (adv7535 on the DSI) is not wired on the DK and is unused. With it
+	 * enabled the LTDC defers forever waiting for the DSI->HDMI bridge; the
+	 * display is LVDS only (see schematic sheet 9). Disable the whole DSI/HDMI
+	 * path so the LTDC binds the LVDS panel directly. */
+	status = "disabled";
 
 	ports {
 		#address-cells = <1>;
@@ -499,7 +504,8 @@
 		compatible = "adi,adv7535";
 		reg = <0x3d>, <0x3c>, <0x3f>, <0x38>;
 		reg-names = "main", "cec", "edid", "packet";
-		status = "okay";
+		/* Unused HDMI bridge (not wired) -- disabled, LVDS-only display. */
+		status = "disabled";
 		adi,dsi-lanes = <4>;
 		clocks = <&clk_ext_cec>;
 		clock-names = "cec";
