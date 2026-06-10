@@ -427,6 +427,10 @@
 
 &eth1 {
 	status = "okay";
+	/* Fixed locally-administered MAC so the DHCP lease (and thus the IP)
+	 * is stable across reboots -- there is no OTP/bootloader-provided MAC
+	 * on the direct TF-A boot, so the kernel would otherwise randomise it. */
+	local-mac-address = [02 00 de ad be ef];
 	pinctrl-0 = <&eth1_rgmii_pins_b>;
 	pinctrl-1 = <&eth1_rgmii_sleep_pins_b>;
 	pinctrl-names = "default", "sleep";
