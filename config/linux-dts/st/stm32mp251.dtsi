@@ -292,57 +292,6 @@
 			#size-cells = <0>;
 			linaro,optee-channel-id = <0>;
 
-			scmi_voltd: protocol@17 {
-				reg = <0x17>;
-
-				scmi_regu: regulators {
-					#address-cells = <1>;
-					#size-cells = <0>;
-
-					scmi_vddio1: regulator@0 {
-						reg = <VOLTD_SCMI_VDDIO1>;
-						regulator-name = "vddio1";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-					scmi_vddio2: regulator@1 {
-						reg = <VOLTD_SCMI_VDDIO2>;
-						regulator-name = "vddio2";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-					scmi_vddio3: regulator@2 {
-						reg = <VOLTD_SCMI_VDDIO3>;
-						regulator-name = "vddio3";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-					scmi_vddio4: regulator@3 {
-						reg = <VOLTD_SCMI_VDDIO4>;
-						regulator-name = "vddio4";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-					scmi_vdd33ucpd: regulator@5 {
-						reg = <VOLTD_SCMI_UCPD>;
-						regulator-name = "vdd33ucpd";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-					scmi_vdda18adc: regulator@7 {
-						reg = <VOLTD_SCMI_ADC>;
-						regulator-name = "vdda18adc";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-					scmi_vddcpu: regulator@a {
-						reg = <VOLTD_SCMI_STPMIC2_BUCK1>;
-						regulator-name = "vddcpu";
-						regulator-boot-on;
-						regulator-always-on;
-					};
-				};
-			};
 		};
 	};
 

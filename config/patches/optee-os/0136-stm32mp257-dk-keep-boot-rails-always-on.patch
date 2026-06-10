@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: agent3 <agent3@localhost>
+Date: Wed, 10 Jun 2026 03:30:00 -0700
+Subject: [PATCH] stm32mp257-dk: keep SD, eMMC and USB rails always on
+
+Linux no longer claims SCMI voltage domains, so OP-TEE regulator
+cleanup now disables every rail with refcount 0: vdd_sdcard,
+vddio_sdcard and the PWR vddio1 compartment go down and the SD card
+disappears for Linux (mmc0 -110, root never mounts). U-Boot only
+re-enables them transiently while loading the kernel. Mark the SD
+trio plus vdd_emmc and vdd3v3_usb regulator-always-on in OP-TEE so
+the boot-critical rails survive without a non-secure owner.
+
+---
+diff --git a/core/arch/arm/dts/stm32mp257f-dk.dts b/core/arch/arm/dts/stm32mp257f-dk.dts
+--- a/core/arch/arm/dts/stm32mp257f-dk.dts
++++ b/core/arch/arm/dts/stm32mp257f-dk.dts
+@@ -243,6 +243,7 @@
+ 				regulator-min-microvolt = <3300000>;
+ 				regulator-max-microvolt = <3300000>;
+ 				regulator-over-current-protection;
++				regulator-always-on;
+ 				st,pwrctrl-sel = <3>;
+ 				st,pwrctrl-reset;
+ 			};
+@@ -275,6 +276,7 @@
+ 				regulator-min-microvolt = <3300000>;
+ 				regulator-max-microvolt = <3300000>;
+ 				regulator-over-current-protection;
++				regulator-always-on;
+ 			};
+ 			v5v_hdmi: ldo5 {
+ 				regulator-name = "v5v_hdmi";
+@@ -298,6 +300,7 @@
+ 				regulator-min-microvolt = <3300000>;
+ 				regulator-max-microvolt = <3300000>;
+ 				regulator-over-current-protection;
++				regulator-always-on;
+ 				st,regulator-bypass-microvolt = <3300000>;
+ 				st,pwrctrl-sel = <3>;
+ 				st,pwrctrl-reset;
+@@ -307,6 +310,7 @@
+ 				regulator-min-microvolt = <1800000>;
+ 				regulator-max-microvolt = <3300000>;
+ 				regulator-over-current-protection;
++				regulator-always-on;
+ 				st,regulator-bypass-microvolt = <3300000>;
+ 				st,pwrctrl-sel = <3>;
+ 				st,pwrctrl-reset;
+@@ -361,6 +365,7 @@
+ 		regulator-min-microvolt = <1800000>;
+ 		regulator-max-microvolt = <3300000>;
+ 		vddio1-supply = <&vddio_sdcard>;
++		regulator-always-on;
+ 	};
+ 
+ 	vddio2: vddio2 {
+--
+2.43.0
