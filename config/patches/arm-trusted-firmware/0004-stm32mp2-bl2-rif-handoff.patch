@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: agent3 <agent3@localhost>
+Date: Wed, 10 Jun 2026 06:40:00 -0700
+Subject: [PATCH] stm32mp2: BL2 applies the non-secure RIF hand-off state
+
+Program RIFSC/RCC/PWR/EXTI/GPIO/TAMP RIF configuration from BL2 to the
+audited hand-off state: everything non-secure and CID-filter free
+except CRYP2 and IWDG3 (Cortex-M33, CID2), TAMP backup zones kept.
+Applied after the last image (BL33) is loaded so the serial-boot USB
+DFU path is not disturbed (reprogramming the USB RIMC mid-transfer
+breaks dwc3 DMA). While OP-TEE (todays TDCID policy owner) is present
+it re-applies the same state afterwards; once BL32 is dropped BL2 is
+the single owner.
+
+---
+diff --git a/plat/st/stm32mp2/stm32mp2_rif_handoff.c b/plat/st/stm32mp2/stm32mp2_rif_handoff.c
+new file mode 100644
+--- /dev/null
++++ b/plat/st/stm32mp2/stm32mp2_rif_handoff.c
+@@ -0,0 +1,189 @@
++/*
++ * Copyright (c) 2026, STMicroelectronics - All Rights Reserved
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ *
++ * Program the RIF firewall hand-off state for the OP-TEE-less lean
++ * image: every resource non-secure and CID-filter-free, except CRYP2
++ * and IWDG3 which belong to the Cortex-M33 (CID2). Values mirror the
++ * state audited on a running board (rif_audit.sh ground truth).
++ * While OP-TEE is still present it re-applies the same policy later;
++ * once BL32 is dropped this routine is the single owner.
++ */
++
++#include <common/debug.h>
++#include <drivers/clk.h>
++#include <lib/mmio.h>
++
++#include <dt-bindings/clock/stm32mp25-clks.h>
++#include <platform_def.h>
++
++/* RIFSC (base RIFSC_BASE) */
++#define RIFSC_RISC_SECCFGR(i)		(U(0x10) + U(4) * (i))
++#define RIFSC_RISC_PRIVCFGR(i)		(U(0x30) + U(4) * (i))
++#define RIFSC_RISC_PER_CIDCFGR(i)	(U(0x100) + U(8) * (i))
++#define RIFSC_RIMC_ATTR(i)		(U(0xC10) + U(4) * (i))
++#define RIFSC_PER_MAX			U(128)
++#define RIFSC_ID_CRYP2			U(97)
++#define RIFSC_ID_IWDG3			U(100)
++#define RIFSC_CID2_LOCKED		U(0x21)	/* CFEN | SCID=CID2 */
++
++/* RCC RIF (base RCC_BASE) */
++#define RCC_SECCFGR(i)			(U(0x00) + U(4) * (i))
++#define RCC_PRIVCFGR(i)			(U(0x10) + U(4) * (i))
++#define RCC_R_CIDCFGR(i)		(U(0x30) + U(8) * (i))
++#define RCC_RES_MAX			U(114)
++
++/* PWR RIF (base PWR_BASE) */
++#define PWR_RSECCFGR			U(0x100)
++#define PWR_RPRIVCFGR			U(0x104)
++#define PWR_R_CIDCFGR(i)		(U(0x108) + U(4) * (i))
++#define PWR_WIOSECCFGR			U(0x180)
++#define PWR_WIOPRIVCFGR			U(0x184)
++#define PWR_WIO_CIDCFGR(i)		(U(0x188) + U(8) * ((i) - U(1)))
++#define PWR_R_MAX			U(7)
++#define PWR_WIO_MAX			U(6)
++
++/* EXTI RIF */
++#define EXTI_SECCFGR(i)			(U(0x14) + U(0x20) * (i))
++#define EXTI_PRIVCFGR(i)		(U(0x18) + U(0x20) * (i))
++#define EXTI_EN_CIDCFGR(i)		(U(0x180) + U(4) * (i))
++#define EXTI_WORDS			U(3)
++#define EXTI_LINES_MAX			U(96)
++
++/* GPIO RIF (per bank) */
++#define GPIO_SECCFGR			U(0x30)
++#define GPIO_PRIVCFGR			U(0x34)
++#define GPIO_CIDCFGR(p)			(U(0x50) + U(8) * (p))
++#define GPIO_PINS			U(16)
++
++/* TAMP RIF + backup register zones (base TAMP_BASE) */
++#define TAMP_SECCFGR			U(0x20)
++#define TAMP_PRIVCFGR			U(0x24)
++#define TAMP_BKPRIFR(i)			(U(0x70) + U(4) * ((i) - U(1)))
++#define TAMP_CIDCFGR(i)			(U(0x80) + U(4) * (i))
++#define TAMP_SECCFGR_VAL		U(0x00600030)
++#define TAMP_BKPRIFR1_VAL		U(0x18)
++#define TAMP_BKPRIFR2_VAL		U(0x48)
++#define TAMP_BKPRIFR3_VAL		U(0x0078006C)
++
++static const uint32_t rimc_attr_val[16] = {
++	U(0x214), U(0x200), U(0x200), U(0x000),
++	U(0x200), U(0x200), U(0x200), U(0x200),
++	U(0x200), U(0x200), U(0x200), U(0x204),
++	U(0x204), U(0x204), U(0x200), U(0x200),
++};
++
++struct gpio_bank_cfg {
++	uintptr_t base;
++	unsigned long clock;
++};
++
++static const struct gpio_bank_cfg gpio_banks[] = {
++	{ GPIOA_BASE, CK_BUS_GPIOA },
++	{ GPIOB_BASE, CK_BUS_GPIOB },
++	{ GPIOC_BASE, CK_BUS_GPIOC },
++	{ GPIOD_BASE, CK_BUS_GPIOD },
++	{ GPIOE_BASE, CK_BUS_GPIOE },
++	{ GPIOF_BASE, CK_BUS_GPIOF },
++	{ GPIOG_BASE, CK_BUS_GPIOG },
++	{ GPIOH_BASE, CK_BUS_GPIOH },
++	{ GPIOI_BASE, CK_BUS_GPIOI },
++	{ GPIOJ_BASE, CK_BUS_GPIOJ },
++	{ GPIOK_BASE, CK_BUS_GPIOK },
++	{ GPIOZ_BASE, CK_BUS_GPIOZ },
++};
++
++void stm32mp2_rif_handoff(void)
++{
++	uint32_t i;
++	uint32_t p;
++
++	/* RIFSC peripherals */
++	for (i = 0U; i < RIFSC_PER_MAX; i++) {
++		uint32_t cid = 0U;
++
++		if ((i == RIFSC_ID_CRYP2) || (i == RIFSC_ID_IWDG3)) {
++			cid = RIFSC_CID2_LOCKED;
++		}
++
++		mmio_write_32(RIFSC_BASE + RIFSC_RISC_PER_CIDCFGR(i), cid);
++	}
++
++	for (i = 0U; i < 6U; i++) {
++		uint32_t sec = (i == 3U) ? U(0x12) : 0U;
++
++		mmio_write_32(RIFSC_BASE + RIFSC_RISC_SECCFGR(i), sec);
++		mmio_write_32(RIFSC_BASE + RIFSC_RISC_PRIVCFGR(i), sec);
++	}
++
++	for (i = 0U; i < ARRAY_SIZE(rimc_attr_val); i++) {
++		mmio_write_32(RIFSC_BASE + RIFSC_RIMC_ATTR(i),
++			      rimc_attr_val[i]);
++	}
++
++	/* RCC resources */
++	for (i = 0U; i < RCC_RES_MAX; i++) {
++		mmio_write_32(RCC_BASE + RCC_R_CIDCFGR(i), 0U);
++	}
++
++	for (i = 0U; i < 4U; i++) {
++		mmio_write_32(RCC_BASE + RCC_SECCFGR(i), 0U);
++		mmio_write_32(RCC_BASE + RCC_PRIVCFGR(i), 0U);
++	}
++
++	/* PWR resources and wake-up IOs */
++	for (i = 0U; i < PWR_R_MAX; i++) {
++		mmio_write_32(PWR_BASE + PWR_R_CIDCFGR(i), 0U);
++	}
++
++	for (i = 1U; i <= PWR_WIO_MAX; i++) {
++		mmio_write_32(PWR_BASE + PWR_WIO_CIDCFGR(i), 0U);
++	}
++
++	mmio_write_32(PWR_BASE + PWR_RSECCFGR, 0U);
++	mmio_write_32(PWR_BASE + PWR_RPRIVCFGR, 0U);
++	mmio_write_32(PWR_BASE + PWR_WIOSECCFGR, 0U);
++	mmio_write_32(PWR_BASE + PWR_WIOPRIVCFGR, 0U);
++
++	/* EXTI1/EXTI2 lines */
++	for (i = 0U; i < EXTI_LINES_MAX; i++) {
++		mmio_write_32(STM32MP_EXTI1_BASE + EXTI_EN_CIDCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI2_BASE + EXTI_EN_CIDCFGR(i), 0U);
++	}
++
++	for (i = 0U; i < EXTI_WORDS; i++) {
++		mmio_write_32(STM32MP_EXTI1_BASE + EXTI_SECCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI1_BASE + EXTI_PRIVCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI2_BASE + EXTI_SECCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI2_BASE + EXTI_PRIVCFGR(i), 0U);
++	}
++
++	/* GPIO banks A..K and Z */
++	for (i = 0U; i < ARRAY_SIZE(gpio_banks); i++) {
++		if (clk_enable(gpio_banks[i].clock) != 0) {
++			continue;
++		}
++
++		for (p = 0U; p < GPIO_PINS; p++) {
++			mmio_write_32(gpio_banks[i].base + GPIO_CIDCFGR(p),
++				      0U);
++		}
++
++		mmio_write_32(gpio_banks[i].base + GPIO_SECCFGR, 0U);
++		mmio_write_32(gpio_banks[i].base + GPIO_PRIVCFGR, 0U);
++	}
++
++	/* TAMP: keep the audited backup-register zoning, no CID filtering */
++	for (i = 0U; i < 4U; i++) {
++		mmio_write_32(TAMP_BASE + TAMP_CIDCFGR(i), 0U);
++	}
++
++	mmio_write_32(TAMP_BASE + TAMP_SECCFGR, TAMP_SECCFGR_VAL);
++	mmio_write_32(TAMP_BASE + TAMP_PRIVCFGR, 0U);
++	mmio_write_32(TAMP_BASE + TAMP_BKPRIFR(1), TAMP_BKPRIFR1_VAL);
++	mmio_write_32(TAMP_BASE + TAMP_BKPRIFR(2), TAMP_BKPRIFR2_VAL);
++	mmio_write_32(TAMP_BASE + TAMP_BKPRIFR(3), TAMP_BKPRIFR3_VAL);
++
++	NOTICE("RIF: BL2 applied non-secure hand-off firewall state\n");
++}
+diff --git a/plat/st/stm32mp2/bl2_plat_setup.c b/plat/st/stm32mp2/bl2_plat_setup.c
+--- a/plat/st/stm32mp2/bl2_plat_setup.c
++++ b/plat/st/stm32mp2/bl2_plat_setup.c
+@@ -23,6 +23,8 @@
+ #include <drivers/st/stm32_hash.h>
+ #include <drivers/st/stm32_iwdg.h>
+ #include <drivers/st/stm32_rifsc.h>
++
++void stm32mp2_rif_handoff(void);
+ #include <drivers/st/stm32_rng.h>
+ #include <drivers/st/stm32_uart.h>
+ #include <drivers/st/stm32mp_pmic2.h>
+@@ -815,6 +817,13 @@
+ 			panic();
+ 		}
+ #endif /* PSA_FWU_SUPPORT */
++#if !STM32MP_M33_TDCID
++		/*
++		 * All images are loaded (including over USB in serial boot):
++		 * safe to program the non-secure RIF hand-off state now.
++		 */
++		stm32mp2_rif_handoff();
++#endif
+ 		break;
+ 
+ 	default:
+diff --git a/plat/st/stm32mp2/platform.mk b/plat/st/stm32mp2/platform.mk
+--- a/plat/st/stm32mp2/platform.mk
++++ b/plat/st/stm32mp2/platform.mk
+@@ -309,6 +309,8 @@
+ 
+ BL2_SOURCES			+=	drivers/st/rif/stm32_rifsc.c
+ 
++BL2_SOURCES			+=	plat/st/stm32mp2/stm32mp2_rif_handoff.c
++
+ ifeq ($(STM32MP_M33_TDCID),0)
+ BL2_SOURCES			+=	drivers/st/rif/stm32mp2_risaf.c
+ endif
+--
+2.43.0
