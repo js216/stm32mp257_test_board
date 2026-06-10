@@ -1,0 +1,629 @@
+STM32MP257F-DK direct-boot kernel changes (no OP-TEE, no U-Boot).
+
+Consolidates: cpuidle-psci pm-domain keep, clk-stm32mp25 gpio/ipcc2 export,
+mfd stm32-pwr wakeup pins, dts build restriction, and the LVDS display fix
+(PHY PLL VCO-range constraint + panel rate default + modeset PLL lock +
+non-fatal probe-time timeout, needed because no bootloader pre-locks the PLL).
+
+--- a/drivers/cpuidle/cpuidle-psci-domain.c
++++ b/drivers/cpuidle/cpuidle-psci-domain.c
+@@ -28,6 +28,7 @@
+ 
+ static LIST_HEAD(psci_pd_providers);
+ static bool psci_pd_allow_domain_state;
++static bool psci_pd_osi_mode;
+ 
+ static int psci_pd_power_off(struct generic_pm_domain *pd)
+ {
+@@ -37,7 +38,7 @@
+ 	if (!state->data)
+ 		return 0;
+ 
+-	if (!psci_pd_allow_domain_state)
++	if (!psci_pd_allow_domain_state || !psci_pd_osi_mode)
+ 		return -EBUSY;
+ 
+ 	/* OSI mode is enabled, set the corresponding domain state. */
+@@ -174,8 +175,14 @@
+ 
+ 	/* let's try to enable OSI. */
+ 	ret = psci_set_osi_mode(use_osi);
+-	if (ret)
+-		goto remove_pd;
++	if (ret) {
++		pr_warn("failed to set %s mode: %d, keeping CPU PM domains idle-disabled\n",
++			use_osi ? "OSI" : "PC", ret);
++		use_osi = false;
++		ret = 0;
++	}
++
++	psci_pd_osi_mode = use_osi;
+ 
+ 	pr_info("Initialized CPU PM domain topology using %s mode\n",
+ 		use_osi ? "OSI" : "PC");
+--- a/drivers/clk/stm32/clk-stm32mp25.c
++++ b/drivers/clk/stm32/clk-stm32mp25.c
+@@ -41,6 +41,19 @@
+ #define STM32MP25_RIFRCC_DBG_ID		73
+ #define STM32MP25_RIFRCC_IS2M_ID	107
+ #define STM32MP25_RIFRCC_MCO1_ID	108
++#define STM32MP25_RIFRCC_IPCC2_ID	88
++#define STM32MP25_RIFRCC_GPIOA_ID	90
++#define STM32MP25_RIFRCC_GPIOB_ID	91
++#define STM32MP25_RIFRCC_GPIOC_ID	92
++#define STM32MP25_RIFRCC_GPIOD_ID	93
++#define STM32MP25_RIFRCC_GPIOE_ID	94
++#define STM32MP25_RIFRCC_GPIOF_ID	95
++#define STM32MP25_RIFRCC_GPIOG_ID	96
++#define STM32MP25_RIFRCC_GPIOH_ID	97
++#define STM32MP25_RIFRCC_GPIOI_ID	98
++#define STM32MP25_RIFRCC_GPIOJ_ID	99
++#define STM32MP25_RIFRCC_GPIOK_ID	100
++#define STM32MP25_RIFRCC_GPIOZ_ID	101
+ #define STM32MP25_RIFRCC_MCO2_ID	109
+ #define STM32MP25_RIFRCC_OSPI1_ID	110
+ #define STM32MP25_RIFRCC_OSPI2_ID	111
+@@ -1221,6 +1234,84 @@
+ 	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_is2m", ICN_APB3, &clk_stm32_gate_ops, 0),
+ };
+ 
++/* GPIO and IPCC2 */
++static struct clk_stm32_gate ck_icn_p_ipcc2 = {
++	.gate_id = GATE_IPCC2,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_ipcc2", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_ipcc2_am = {
++	.gate_id = GATE_IPCC2AM,
++	.hw.init = CLK_HW_INIT_HW("ck_icn_p_ipcc2_am", &ck_icn_p_ipcc2.hw,
++				  &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioa = {
++	.gate_id = GATE_GPIOA,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioa", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiob = {
++	.gate_id = GATE_GPIOB,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiob", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioc = {
++	.gate_id = GATE_GPIOC,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioc", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiod = {
++	.gate_id = GATE_GPIOD,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiod", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioe = {
++	.gate_id = GATE_GPIOE,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioe", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiof = {
++	.gate_id = GATE_GPIOF,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiof", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiog = {
++	.gate_id = GATE_GPIOG,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiog", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioh = {
++	.gate_id = GATE_GPIOH,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioh", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioi = {
++	.gate_id = GATE_GPIOI,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioi", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioj = {
++	.gate_id = GATE_GPIOJ,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioj", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpiok = {
++	.gate_id = GATE_GPIOK,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpiok", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioz = {
++	.gate_id = GATE_GPIOZ,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_gpioz", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_gpioz_am = {
++	.gate_id = GATE_GPIOZAM,
++	.hw.init = CLK_HW_INIT_HW("ck_icn_p_gpioz_am", &ck_icn_p_gpioz.hw,
++				  &clk_stm32_gate_ops, 0),
++};
++
+ /* IWDG */
+ static struct clk_stm32_gate ck_icn_p_iwdg1 = {
+ 	.gate_id = GATE_IWDG1,
+@@ -2004,6 +2095,21 @@
+ 	STM32_GATE_CFG(CK_BUS_CRYP2, ck_icn_p_cryp2, SEC_RIFSC(97)),
+ 	STM32_GATE_CFG(CK_BUS_SAES, ck_icn_p_saes, SEC_RIFSC(94)),
+ 	STM32_GATE_CFG(CK_BUS_PKA, ck_icn_p_pka, SEC_RIFSC(93)),
++	STM32_GATE_CFG(CK_BUS_IPCC2, ck_icn_p_ipcc2, SEC_RIFRCC(IPCC2)),
++	STM32_GATE_CFG(CK_IPCC2_AM, ck_icn_p_ipcc2_am, SEC_RIFRCC(IPCC2)),
++	STM32_GATE_CFG(CK_BUS_GPIOA, ck_icn_p_gpioa, SEC_RIFRCC(GPIOA)),
++	STM32_GATE_CFG(CK_BUS_GPIOB, ck_icn_p_gpiob, SEC_RIFRCC(GPIOB)),
++	STM32_GATE_CFG(CK_BUS_GPIOC, ck_icn_p_gpioc, SEC_RIFRCC(GPIOC)),
++	STM32_GATE_CFG(CK_BUS_GPIOD, ck_icn_p_gpiod, SEC_RIFRCC(GPIOD)),
++	STM32_GATE_CFG(CK_BUS_GPIOE, ck_icn_p_gpioe, SEC_RIFRCC(GPIOE)),
++	STM32_GATE_CFG(CK_BUS_GPIOF, ck_icn_p_gpiof, SEC_RIFRCC(GPIOF)),
++	STM32_GATE_CFG(CK_BUS_GPIOG, ck_icn_p_gpiog, SEC_RIFRCC(GPIOG)),
++	STM32_GATE_CFG(CK_BUS_GPIOH, ck_icn_p_gpioh, SEC_RIFRCC(GPIOH)),
++	STM32_GATE_CFG(CK_BUS_GPIOI, ck_icn_p_gpioi, SEC_RIFRCC(GPIOI)),
++	STM32_GATE_CFG(CK_BUS_GPIOJ, ck_icn_p_gpioj, SEC_RIFRCC(GPIOJ)),
++	STM32_GATE_CFG(CK_BUS_GPIOK, ck_icn_p_gpiok, SEC_RIFRCC(GPIOK)),
++	STM32_GATE_CFG(CK_BUS_GPIOZ, ck_icn_p_gpioz, SEC_RIFRCC(GPIOZ)),
++	STM32_GATE_CFG(CK_GPIOZ_AM, ck_icn_p_gpioz_am, SEC_RIFRCC(GPIOZ)),
+ 	STM32_GATE_CFG(CK_BUS_ADF1, ck_icn_p_adf1, SEC_RIFSC(55)),
+ 	STM32_GATE_CFG(CK_BUS_SPI8, ck_icn_p_spi8, SEC_RIFSC(29)),
+ 	STM32_GATE_CFG(CK_BUS_LPUART1, ck_icn_p_lpuart1, SEC_RIFSC(40)),
+--- a/drivers/mfd/Kconfig
++++ b/drivers/mfd/Kconfig
+@@ -2131,7 +2131,7 @@
+ 
+ config MFD_STM32MP1_PWR
+ 	bool "STM32MP1 wake-up pins"
+-	depends on MACH_STM32MP157
++	depends on MACH_STM32MP157 || ARCH_STM32 || COMPILE_TEST
+ 	default y
+ 	help
+ 	  Select this option to enable STM32 PWR Wake-up pins driver.
+--- a/drivers/mfd/stm32-pwr.c
++++ b/drivers/mfd/stm32-pwr.c
+@@ -11,6 +11,7 @@
+ #include <linux/irqchip/chained_irq.h>
+ #include <linux/module.h>
+ #include <linux/of_address.h>
++#include <linux/of_device.h>
+ #include <linux/of_gpio.h>
+ #include <linux/of_irq.h>
+ #include <linux/platform_device.h>
+@@ -30,12 +31,25 @@
+ #define MPUWKUPENR 0x8
+ 
+ #define WKUP_FLAGS_MASK GENMASK(5, 0)
++#define MP25_WKUPCR1 0x60
+ 
+ // WKUPCR bits definition
+ #define WKUP_EDGE_SHIFT 8
+ #define WKUP_PULL_SHIFT 16
+ #define WKUP_PULL_MASK GENMASK(1, 0)
+ 
++// MP25 PWR_WKUPCRx bits definition
++#define MP25_WKUPC BIT(0)
++#define MP25_WKUPP BIT(8)
++#define MP25_WKUPPUPD_SHIFT 12
++#define MP25_WKUPPUPD_MASK GENMASK(13, 12)
++#define MP25_WKUPENCPU1 BIT(16)
++#define MP25_WKUPF BIT(31)
++
++struct stm32_pwr_variant {
++	bool mp25;
++};
++
+ enum wkup_pull_setting {
+ 	WKUP_NO_PULL = 0,
+ 	WKUP_PULL_UP,
+@@ -58,14 +72,54 @@
+ 	u32 wake;			/* IRQ is wake on */
+ 	u32 pending;			/* IRQ has been received while wake on*/
+ 	int gpio[NB_WAKEUPPINS];
++	const struct stm32_pwr_variant *variant;
+ };
+ 
++static bool stm32_pwr_is_mp25(struct stm32_pwr_data *priv)
++{
++	return priv->variant && priv->variant->mp25;
++}
++
++static u32 stm32_pwr_mp25_wkupcr(unsigned long pin)
++{
++	return MP25_WKUPCR1 + pin * sizeof(u32);
++}
++
++static void stm32_pwr_write(struct stm32_pwr_data *priv, u32 offset, u32 val)
++{
++	if (stm32_pwr_is_mp25(priv))
++		writel_relaxed(val, priv->base + offset);
++	else
++		SMC(STM32_SVC_PWR, STM32_WRITE, offset, val);
++}
++
++static void stm32_pwr_set_bits(struct stm32_pwr_data *priv, u32 offset, u32 bits)
++{
++	if (stm32_pwr_is_mp25(priv))
++		writel_relaxed(readl_relaxed(priv->base + offset) | bits,
++			       priv->base + offset);
++	else
++		SMC(STM32_SVC_PWR, STM32_SET_BITS, offset, bits);
++}
++
++static void stm32_pwr_clear_bits(struct stm32_pwr_data *priv, u32 offset, u32 bits)
++{
++	if (stm32_pwr_is_mp25(priv))
++		writel_relaxed(readl_relaxed(priv->base + offset) & ~bits,
++			       priv->base + offset);
++	else
++		SMC(STM32_SVC_PWR, STM32_CLEAR_BITS, offset, bits);
++}
++
+ static void stm32_pwr_irq_ack(struct irq_data *d)
+ {
+ 	struct stm32_pwr_data *priv = d->domain->host_data;
+ 
+ 	dev_dbg(priv->dev, "irq:%lu\n", d->hwirq);
+-	SMC(STM32_SVC_PWR, STM32_SET_BITS, WKUPCR, BIT(d->hwirq));
++	if (stm32_pwr_is_mp25(priv))
++		stm32_pwr_set_bits(priv, stm32_pwr_mp25_wkupcr(d->hwirq), MP25_WKUPC);
++	else
++		stm32_pwr_set_bits(priv, WKUPCR, BIT(d->hwirq));
+ }
+ 
+ static void stm32_pwr_irq_set_state(struct irq_data *d)
+@@ -75,10 +129,16 @@
+ 	dev_dbg(priv->dev, "irq:%lu\n", d->hwirq);
+ 
+ 	/* enable is not masker or wake enabled */
+-	if (!(priv->masked & BIT(d->hwirq)) || (priv->wake & BIT(d->hwirq)))
+-		SMC(STM32_SVC_PWR, STM32_SET_BITS, MPUWKUPENR, BIT(d->hwirq));
+-	else
+-		SMC(STM32_SVC_PWR, STM32_CLEAR_BITS, MPUWKUPENR, BIT(d->hwirq));
++	if (!(priv->masked & BIT(d->hwirq)) || (priv->wake & BIT(d->hwirq))) {
++		if (stm32_pwr_is_mp25(priv))
++			stm32_pwr_set_bits(priv, stm32_pwr_mp25_wkupcr(d->hwirq), MP25_WKUPENCPU1);
++		else
++			stm32_pwr_set_bits(priv, MPUWKUPENR, BIT(d->hwirq));
++	} else if (stm32_pwr_is_mp25(priv)) {
++		stm32_pwr_clear_bits(priv, stm32_pwr_mp25_wkupcr(d->hwirq), MP25_WKUPENCPU1);
++	} else {
++		stm32_pwr_clear_bits(priv, MPUWKUPENR, BIT(d->hwirq));
++	}
+ }
+ 
+ static void stm32_pwr_irq_mask(struct irq_data *d)
+@@ -113,7 +173,7 @@
+ 	}
+ 	stm32_pwr_irq_set_state(d);
+ 
+-	if (parent->chip && parent->chip->irq_set_wake)
++	if (parent && parent->chip && parent->chip->irq_set_wake)
+ 		return parent->chip->irq_set_wake(parent, on);
+ 
+ 	return 0;
+@@ -128,26 +188,38 @@
+ 
+ 	dev_dbg(priv->dev, "irq:%lu\n", d->hwirq);
+ 
+-	en = readl_relaxed(priv->base + MPUWKUPENR) & BIT(pin_id);
++	if (stm32_pwr_is_mp25(priv))
++		en = readl_relaxed(priv->base + stm32_pwr_mp25_wkupcr(pin_id)) & MP25_WKUPENCPU1;
++	else
++		en = readl_relaxed(priv->base + MPUWKUPENR) & BIT(pin_id);
+ 	/* reference manual request to disable the wakeup pin while
+ 	 * changing the edge detection setting
+ 	 */
+ 	if (en)
+ 		stm32_pwr_irq_mask(d);
+ 
+-	wkupcr = readl_relaxed(priv->base + WKUPCR);
++	wkupcr = readl_relaxed(priv->base +
++			       (stm32_pwr_is_mp25(priv) ? stm32_pwr_mp25_wkupcr(pin_id) : WKUPCR));
+ 	switch (flow_type & IRQ_TYPE_SENSE_MASK) {
+ 	case IRQF_TRIGGER_FALLING:
+-		wkupcr |= (1 << (WKUP_EDGE_SHIFT + pin_id));
++		if (stm32_pwr_is_mp25(priv))
++			wkupcr |= MP25_WKUPP;
++		else
++			wkupcr |= (1 << (WKUP_EDGE_SHIFT + pin_id));
+ 		break;
+ 	case IRQF_TRIGGER_RISING:
+-		wkupcr &= ~(1 << (WKUP_EDGE_SHIFT + pin_id));
++		if (stm32_pwr_is_mp25(priv))
++			wkupcr &= ~MP25_WKUPP;
++		else
++			wkupcr &= ~(1 << (WKUP_EDGE_SHIFT + pin_id));
+ 		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+ 
+-	SMC(STM32_SVC_PWR, STM32_WRITE, WKUPCR, wkupcr);
++	stm32_pwr_write(priv,
++			stm32_pwr_is_mp25(priv) ? stm32_pwr_mp25_wkupcr(pin_id) : WKUPCR,
++			wkupcr);
+ 
+ 	if (en)
+ 		stm32_pwr_irq_unmask(d);
+@@ -164,7 +236,7 @@
+ 
+ 	irq_data_update_effective_affinity(data, dest);
+ 
+-	if (parent->chip && parent->chip->irq_set_affinity)
++	if (parent && parent->chip && parent->chip->irq_set_affinity)
+ 		return parent->chip->irq_set_affinity(parent, dest, force);
+ 
+ 	return IRQ_SET_MASK_OK_DONE;
+@@ -231,11 +303,19 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	wkupcr = readl_relaxed(priv->base + WKUPCR);
+-	wkupcr &= ~((WKUP_PULL_MASK) << (WKUP_PULL_SHIFT + pin_id * 2));
+-	wkupcr |= (config & WKUP_PULL_MASK) << (WKUP_PULL_SHIFT + pin_id * 2);
++	if (stm32_pwr_is_mp25(priv)) {
++		u32 offset = stm32_pwr_mp25_wkupcr(pin_id);
+ 
+-	SMC(STM32_SVC_PWR, STM32_WRITE, WKUPCR, wkupcr);
++		wkupcr = readl_relaxed(priv->base + offset);
++		wkupcr &= ~MP25_WKUPPUPD_MASK;
++		wkupcr |= (config & WKUP_PULL_MASK) << MP25_WKUPPUPD_SHIFT;
++		stm32_pwr_write(priv, offset, wkupcr);
++	} else {
++		wkupcr = readl_relaxed(priv->base + WKUPCR);
++		wkupcr &= ~((WKUP_PULL_MASK) << (WKUP_PULL_SHIFT + pin_id * 2));
++		wkupcr |= (config & WKUP_PULL_MASK) << (WKUP_PULL_SHIFT + pin_id * 2);
++		stm32_pwr_write(priv, WKUPCR, wkupcr);
++	}
+ 
+ 	return 0;
+ }
+@@ -285,6 +365,20 @@
+ 
+ 	chained_irq_enter(chip, desc);
+ 
++	if (stm32_pwr_is_mp25(priv)) {
++		for (i = 0; i < NB_WAKEUPPINS; i++) {
++			u32 wkupcr = readl_relaxed(priv->base + stm32_pwr_mp25_wkupcr(i));
++
++			if ((wkupcr & MP25_WKUPF) && (wkupcr & MP25_WKUPENCPU1)) {
++				struct irq_desc *d = irq_to_desc(irq_find_mapping(priv->domain, i));
++
++				handle_edge_irq(d);
++			}
++		}
++		chained_irq_exit(chip, desc);
++		return;
++	}
++
+ 	wkupfr = readl_relaxed(priv->base + WKUPFR);
+ 	wkupenr = readl_relaxed(priv->base + MPUWKUPENR);
+ 
+@@ -335,6 +429,7 @@
+ 		return -ENOMEM;
+ 	priv->dev = dev;
+ 	dev_set_drvdata(dev, priv);
++	priv->variant = of_device_get_match_data(dev);
+ 
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	priv->base = devm_ioremap_resource(dev, res);
+@@ -344,9 +439,18 @@
+ 	}
+ 
+ 	/* Disable all wake-up pins */
+-	SMC(STM32_SVC_PWR, STM32_WRITE, MPUWKUPENR, 0);
+-	/* Clear all interrupts flags */
+-	SMC(STM32_SVC_PWR, STM32_SET_BITS, WKUPCR, WKUP_FLAGS_MASK);
++	if (stm32_pwr_is_mp25(priv)) {
++		unsigned int i;
++
++		for (i = 0; i < NB_WAKEUPPINS; i++) {
++			stm32_pwr_clear_bits(priv, stm32_pwr_mp25_wkupcr(i), MP25_WKUPENCPU1);
++			stm32_pwr_set_bits(priv, stm32_pwr_mp25_wkupcr(i), MP25_WKUPC);
++		}
++	} else {
++		stm32_pwr_write(priv, MPUWKUPENR, 0);
++		/* Clear all interrupts flags */
++		stm32_pwr_set_bits(priv, WKUPCR, WKUP_FLAGS_MASK);
++	}
+ 
+ 	priv->domain = irq_domain_add_linear(np, NB_WAKEUPPINS,
+ 					     &stm32_pwr_irq_domain_ops, priv);
+@@ -357,9 +461,9 @@
+ 	}
+ 
+ 	ret = irq_of_parse_and_map(np, 0);
+-	if (ret < 0) {
++	if (ret <= 0) {
+ 		dev_err(dev, "failed to get PWR IRQ\n");
+-		ret = priv->irq;
++		ret = -EPROBE_DEFER;
+ 		goto out_domain;
+ 	}
+ 
+@@ -384,8 +488,13 @@
+ 	return 0;
+ }
+ 
++static const struct stm32_pwr_variant stm32mp25_pwr_variant = {
++	.mp25 = true,
++};
++
+ static const struct of_device_id stm32_pwr_ids[] = {
+ 	{ .compatible = "st,stm32mp1-pwr", },
++	{ .compatible = "st,stm32mp25-pwr", .data = &stm32mp25_pwr_variant },
+ 	{},
+ };
+ MODULE_DEVICE_TABLE(of, stm32_pwr_ids);
+--- a/arch/arm64/boot/dts/st/Makefile
++++ b/arch/arm64/boot/dts/st/Makefile
+@@ -1,6 +1,3 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ dtb-$(CONFIG_ARCH_STM32) += \
+-	stm32mp215f-dk.dtb \
+-	stm32mp235f-dk.dtb \
+-	stm32mp257f-dk.dtb \
+-	stm32mp257f-ev1.dtb
++	stm32mp257f-dk.dtb
+--- a/drivers/gpu/drm/stm/lvds.c
++++ b/drivers/gpu/drm/stm/lvds.c
+@@ -380,14 +380,21 @@
+ 					val, val & PHY_PLLSR_PLL_LOCK,
+ 					SLEEP_US, TIMEOUT_US);
+ 	if (ret)
+-		drm_err(drm, "!TIMEOUT! waiting PLL, let's continue\n");
++		dev_err(lvds->dev, "!TIMEOUT! waiting PLL, let's continue\n");
+ 
+ 	/* WCLKCR_SECND_CLKPIX_SEL is for dual link */
+ 	lvds_write(lvds, LVDS_WCLKCR, WCLKCR_SECND_CLKPIX_SEL);
+ 
+ 	lvds_set(lvds, phy->ofs.PLLTESTCR, PHY_PLLTESTCR_CLK_EN);
+ 
+-	return ret;
++	/*
++	 * A PLL-lock timeout here is non-fatal: this .enable runs during the
++	 * LTDC probe (ltdc_resume) before any mode is set, so the target pixel
++	 * rate is 0 and the PLL cannot lock yet. The real lock happens at modeset
++	 * (bridge atomic_enable). Propagating the error would fail the LTDC probe
++	 * and leave no /dev/dri -- "let's continue".
++	 */
++	return 0;
+ }
+ 
+ static int pll_get_clkout_khz(int clkin_khz, int bdiv, int mdiv, int ndiv)
+@@ -402,6 +409,8 @@
+ }
+ 
+ #define TDIV	70
++#define LVDS_FVCO_MIN_KHZ	500000
++#define LVDS_FVCO_MAX_KHZ	2000000
+ #define NDIV_MIN	2
+ #define NDIV_MAX	6
+ #define BDIV_MIN	2
+@@ -424,10 +433,24 @@
+ 
+ 	for (i = NDIV_MIN; i <= NDIV_MAX; i++) {
+ 		for (o = BDIV_MIN; o <= BDIV_MAX; o++) {
++			unsigned long long fvco;
++
+ 			n = DIV_ROUND_CLOSEST(i * o * clkout_khz, clkin_khz);
+-			/* Check ndiv according to vco range */
++			/* Check mdiv (n) against its register range */
+ 			if (n < MDIV_MIN || n > MDIV_MAX)
+ 				continue;
++			/*
++			 * Keep the VCO inside the PHY PLL operating range.
++			 * Fvco = Fref/ndiv * mdiv. The upstream search only
++			 * minimised the output delta and could pick a divider
++			 * giving an out-of-range VCO (e.g. ndiv=4/bdiv=6 ->
++			 * ~2.27 GHz with the 26.6 MHz ck_ker_lvdsphy ref), which
++			 * never locks. RM0457 recommends the HSE ref; without
++			 * that, this bound makes the search pick lockable params.
++			 */
++			fvco = (unsigned long long)clkin_khz * n / i;
++			if (fvco < LVDS_FVCO_MIN_KHZ || fvco > LVDS_FVCO_MAX_KHZ)
++				continue;
+ 			/* Check if new delta is better & saves parameters */
+ 			delta = pll_get_clkout_khz(clkin_khz, i, n, o) - clkout_khz;
+ 			if (delta < 0)
+@@ -571,7 +594,7 @@
+ 
+ 		ret = lvds_pll_enable(lvds, phy);
+ 		if (ret) {
+-			drm_err(drm, "Failed to enable secondary PHY PLL: %d\n", ret);
++			dev_err(lvds->dev, "Failed to enable secondary PHY PLL: %d\n", ret);
+ 			return ret;
+ 		}
+ 	}
+@@ -588,7 +611,7 @@
+ 
+ 		ret = lvds_pll_enable(lvds, phy);
+ 		if (ret) {
+-			drm_err(drm, "Failed to enable primary PHY PLL: %d\n", ret);
++			dev_err(lvds->dev, "Failed to enable primary PHY PLL: %d\n", ret);
+ 			return ret;
+ 		}
+ 	}
+@@ -637,7 +660,7 @@
+ 
+ 	ret = clk_prepare_enable(lvds->pclk);
+ 	if (ret) {
+-		drm_err(drm, "Failed to enable lvds peripheral clk\n");
++		dev_err(lvds->dev, "Failed to enable lvds peripheral clk\n");
+ 		return 0;
+ 	}
+ 
+@@ -748,8 +771,14 @@
+ 
+ 	lvds->lvds_ck_px.init = &clk_data;
+ 
+-	/* set the rate by default at 148500000 */
+-	lvds->pixel_clock_rate = 148500000;
++	/*
++	 * Default to the DK's LVDS panel pixel clock (1024x600 @ 54 MHz). The
++	 * upstream placeholder of 148.5 MHz (1080p) puts the PHY PLL VCO out of
++	 * range so it never locks on a direct TF-A boot where no bootloader
++	 * pre-configured the PLL to the panel rate (the LTDC clk_set_rate does
++	 * not propagate down to this clk). 54 MHz keeps the PLL lockable.
++	 */
++	lvds->pixel_clock_rate = 54000000;
+ 
+ 	ret = clk_hw_register(lvds->dev, &lvds->lvds_ck_px);
+ 	if (ret)
+@@ -1019,6 +1048,32 @@
+ 	if (!conn_state)
+ 		goto err;
+ 
++	/*
++	 * (Re)configure and lock the PHY PLL here, at modeset, where the
++	 * supplies and the reference/peripheral clocks are all enabled. The
++	 * clk framework's .enable callback only ran once during the LTDC probe
++	 * -- before the display was ready -- and is not called again (the pixel
++	 * clk stays prepared), so without this the PLL is never locked on a
++	 * direct TF-A boot (no bootloader pre-configured it) and there is no
++	 * vblank. pixel_clock_rate now holds the panel rate.
++	 */
++	if (lvds->secondary) {
++		lvds_clear(lvds, lvds->secondary->base + lvds->secondary->ofs.GCR,
++			   PHY_GCR_DIV_RSTN | PHY_GCR_RSTZ);
++		lvds_set(lvds, lvds->secondary->base + lvds->secondary->ofs.GCR,
++			 PHY_GCR_DIV_RSTN | PHY_GCR_RSTZ);
++		lvds_pll_config(lvds, lvds->secondary);
++		lvds_pll_enable(lvds, lvds->secondary);
++	}
++	if (lvds->primary) {
++		lvds_clear(lvds, lvds->primary->base + lvds->primary->ofs.GCR,
++			   PHY_GCR_DIV_RSTN | PHY_GCR_RSTZ);
++		lvds_set(lvds, lvds->primary->base + lvds->primary->ofs.GCR,
++			 PHY_GCR_DIV_RSTN | PHY_GCR_RSTZ);
++		lvds_pll_config(lvds, lvds->primary);
++		lvds_pll_enable(lvds, lvds->primary);
++	}
++
+ 	lvds_config_mode(lvds);
+ 
+ 	/* Set Data Mapping */
+@@ -1191,6 +1246,21 @@
+ 		return ret;
+ 	}
+ 
++	/*
++	 * Keep the PLL reference clock enabled from probe. The pixel-clock
++	 * .enable callback (lvds_pll_config/lvds_pll_enable) needs a live
++	 * reference to read its rate and lock the PLL, but it runs from the
++	 * LTDC CRTC-enable before lvds_atomic_enable's pm_runtime resume would
++	 * turn the reference on -- so without this the PLL never locks (no
++	 * vblank, page-flips time out). This matters on direct TF-A boot where
++	 * no bootloader pre-configured the LVDS PLL.
++	 */
++	ret = clk_prepare_enable(lvds->pllref_clk);
++	if (ret) {
++		dev_err(dev, "Unable to enable reference clock: %d\n", ret);
++		return ret;
++	}
++
+ 	ret = lvds_pixel_clk_register(lvds);
+ 	if (ret) {
+ 		DRM_ERROR("Failed to register LVDS pixel clock: %d\n", ret);

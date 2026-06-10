@@ -1,0 +1,842 @@
+Direct TF-A->Linux boot for STM32MP257F-DK (no OP-TEE, no U-Boot).
+
+Consolidates: secondary-A35 enable, TAMP0 unlock, no IWDG1 in BL2, the
+BL2 RIF/firewall hand-off + non-secure DDR (RISAF), PMIC always-on rails
++ VDDIO I/O-domain (SD card) bring-up, SDMMC kernel-clock enable, BL31
+direct-kernel BL33 entry (x0=DTB), and the BL32/OP-TEE removal guards.
+
+--- a/drivers/st/clk/clk-stm32mp2.c
++++ b/drivers/st/clk/clk-stm32mp2.c
+@@ -1699,8 +1699,8 @@
+ 	STM32_GATE(_CK_OSPI2, CK_KER_OSPI2, _CK_FLEXGEN_49, 0, GATE_OSPI2),
+ #endif /* !STM32MP21 */
+ 	STM32_GATE(_CK_FMC, CK_KER_FMC, _CK_FLEXGEN_50, 0, GATE_FMC),
+-	STM32_GATE(_CK_SDMMC1, CK_KER_SDMMC1, _CK_FLEXGEN_51, 0, GATE_SDMMC1),
+-	STM32_GATE(_CK_SDMMC2, CK_KER_SDMMC2, _CK_FLEXGEN_52, 0, GATE_SDMMC2),
++	STM32_GATE(_CK_SDMMC1, CK_KER_SDMMC1, _CK_FLEXGEN_51, CLK_IS_CRITICAL, GATE_SDMMC1),
++	STM32_GATE(_CK_SDMMC2, CK_KER_SDMMC2, _CK_FLEXGEN_52, CLK_IS_CRITICAL, GATE_SDMMC2),
+ 	STM32_GATE(_CK_USB2PHY1, CK_KER_USB2PHY1, _CK_FLEXGEN_57, 0, GATE_USB2PHY1),
+ 	STM32_GATE(_CK_USB2PHY2, CK_KER_USB2PHY2, _CK_FLEXGEN_58, 0, GATE_USB2PHY2),
+ };
+--- a/drivers/st/regulator/regulator_core.c
++++ b/drivers/st/regulator/regulator_core.c
+@@ -147,6 +147,25 @@
+ }
+ 
+ /*
++ * Enable every regulator flagged regulator-always-on / regulator-boot-on.
++ * Needed when TF-A boots the OS directly (no OP-TEE/U-Boot to turn on the
++ * PMIC rails consumed only by Linux, e.g. the SD card LDO).
++ */
++void regulator_enable_always_on(void)
++{
++	struct rdev *rdev;
++
++	for_each_registered_rdev(rdev) {
++		if ((rdev->flags & (REGUL_ALWAYS_ON | REGUL_BOOT_ON)) != 0U) {
++			if (regulator_enable(rdev) != 0) {
++				WARN("%s: enable always-on failed\n",
++				     rdev->desc->node_name);
++			}
++		}
++	}
++}
++
++/*
+  * Disable regulator
+  *
+  * @rdev - pointer to rdev struct
+--- a/fdts/stm32mp257f-dk.dts
++++ b/fdts/stm32mp257f-dk.dts
+@@ -163,7 +163,8 @@
+ 
+ &iwdg1 {
+ 	timeout-sec = <32>;
+-	status = "okay";
++	status = "disabled";
++	/delete-property/ timeout-sec;
+ };
+ 
+ &pwr {
+--- a/include/drivers/st/regulator.h
++++ b/include/drivers/st/regulator.h
+@@ -46,6 +46,7 @@
+ struct rdev *regulator_get_by_supply_name(const void *fdt, int node, const char *name);
+ 
+ int regulator_enable(struct rdev *rdev);
++void regulator_enable_always_on(void);
+ int regulator_disable(struct rdev *rdev);
+ int regulator_is_enabled(const struct rdev *rdev);
+ 
+--- a/plat/st/stm32mp2/bl2_plat_setup.c
++++ b/plat/st/stm32mp2/bl2_plat_setup.c
+@@ -23,6 +23,8 @@
+ #include <drivers/st/stm32_hash.h>
+ #include <drivers/st/stm32_iwdg.h>
+ #include <drivers/st/stm32_rifsc.h>
++
++void stm32mp2_rif_handoff(void);
+ #include <drivers/st/stm32_rng.h>
+ #include <drivers/st/stm32_uart.h>
+ #include <drivers/st/stm32mp_pmic2.h>
+@@ -551,6 +553,14 @@
+ 		initialize_pmic();
+ 	}
+ 
++	/* No OP-TEE/U-Boot in this boot chain: TF-A must turn on the
++	 * always-on PMIC rails that only Linux consumes (SD/eth/LVDS). */
++	regulator_enable_always_on();
++
++	/* Connect the independent VDDIO I/O-supply domains (the SD card pads
++	 * live on VDDIO1): run the VMEN->RDY->SV sequence OP-TEE used to do. */
++	stm32mp2_pwr_enable_io_supplies();
++
+ 	fconf_populate("TB_FW", STM32MP_DTB_BASE);
+ 
+ #if STM32MP_USB_PROGRAMMER
+@@ -655,7 +665,9 @@
+ 	const unsigned int image_ids[] = {
+ 		BL31_IMAGE_ID,
+ 		SOC_FW_CONFIG_ID,
++#if defined(SPD_opteed)
+ 		BL32_IMAGE_ID,
++#endif
+ 		BL33_IMAGE_ID,
+ 		HW_CONFIG_ID,
+ 	};
+@@ -815,6 +827,13 @@
+ 			panic();
+ 		}
+ #endif /* PSA_FWU_SUPPORT */
++#if !STM32MP_M33_TDCID
++		/*
++		 * All images are loaded (including over USB in serial boot):
++		 * safe to program the non-secure RIF hand-off state now.
++		 */
++		stm32mp2_rif_handoff();
++#endif
+ 		break;
+ 
+ 	default:
+--- a/plat/st/stm32mp2/bl31_plat_setup.c
++++ b/plat/st/stm32mp2/bl31_plat_setup.c
+@@ -12,6 +12,9 @@
+ #include <common/runtime_svc.h>
+ #include <drivers/generic_delay_timer.h>
+ #include <drivers/st/stm32_console.h>
++#include <drivers/st/stm32mp_rifsc_regs.h>
++#include <dt-bindings/soc/stm32mp25-rif.h>
++#include <lib/mmio.h>
+ #include <lib/xlat_tables/xlat_tables_v2.h>
+ #include <plat/common/platform.h>
+ 
+@@ -21,6 +24,145 @@
+ static entry_point_info_t bl32_image_ep_info;
+ static entry_point_info_t bl33_image_ep_info;
+ 
++#if 0
++static void stm32mp25_rifsc_unlock_peripheral(unsigned int id, const char *name)
++{
++	uint32_t bit = BIT_32(id % 32U);
++	uintptr_t seccfgr = RIFSC_BASE + _RIFSC_RISC_SECCFGR(id);
++	uintptr_t privcfgr = RIFSC_BASE + _RIFSC_RISC_PRIVCFGR(id);
++	uintptr_t rlockr = RIFSC_BASE + _RIFSC_RISC_RCFGLOCKR(id);
++	uintptr_t cidcfgr = RIFSC_BASE + _RIFSC_RISC_PERy_CIDCFGR(id);
++	uint32_t sec = mmio_read_32(seccfgr);
++	uint32_t priv = mmio_read_32(privcfgr);
++	uint32_t rlock = mmio_read_32(rlockr);
++	uint32_t cid = mmio_read_32(cidcfgr);
++
++	NOTICE("RIFSC: %s before sec=%x priv=%x rlock=%x cid=%x\n",
++	       name, sec, priv, rlock, cid);
++
++	if (((mmio_read_32(RIFSC_BASE + _RIFSC_RISC_CR) & BIT_32(0)) != 0U) ||
++	    ((rlock & bit) != 0U)) {
++		WARN("RIFSC: %s still locked, cannot expose to non-secure world\n", name);
++		return;
++	}
++
++	mmio_clrbits_32(seccfgr, bit);
++	mmio_clrbits_32(privcfgr, bit);
++	mmio_write_32(cidcfgr, 0U);
++	mmio_write_32(RIFSC_BASE + _RIFSC_RISC_PERy_SEMCR(id), 0U);
++
++	NOTICE("RIFSC: %s after sec=%x priv=%x rlock=%x cid=%x\n",
++	       name, mmio_read_32(seccfgr), mmio_read_32(privcfgr),
++	       mmio_read_32(rlockr), mmio_read_32(cidcfgr));
++}
++
++static void stm32mp25_rcc_unlock_resource(unsigned int id, const char *name)
++{
++	uint32_t bit = BIT_32(id % 32U);
++	uintptr_t seccfgr = RCC_BASE + U(0x0) + U(0x4) * (id / 32U);
++	uintptr_t privcfgr = RCC_BASE + U(0x10) + U(0x4) * (id / 32U);
++	uintptr_t rlockr = RCC_BASE + U(0x20) + U(0x4) * (id / 32U);
++	uintptr_t cidcfgr = RCC_BASE + U(0x30) + U(0x8) * id;
++	uint32_t sec = mmio_read_32(seccfgr);
++	uint32_t priv = mmio_read_32(privcfgr);
++	uint32_t rlock = mmio_read_32(rlockr);
++	uint32_t cid = mmio_read_32(cidcfgr);
++
++	NOTICE("RCC RIF: %s before sec=%x priv=%x rlock=%x cid=%x\n",
++	       name, sec, priv, rlock, cid);
++
++	if ((rlock & bit) != 0U) {
++		WARN("RCC RIF: %s still locked, cannot expose to non-secure world\n", name);
++		return;
++	}
++
++	mmio_clrbits_32(seccfgr, bit);
++	mmio_clrbits_32(privcfgr, bit);
++	mmio_write_32(cidcfgr, 0U);
++	mmio_write_32(RCC_BASE + U(0x34) + U(0x8) * id, 0U);
++
++	NOTICE("RCC RIF: %s after sec=%x priv=%x rlock=%x cid=%x\n",
++	       name, mmio_read_32(seccfgr), mmio_read_32(privcfgr),
++	       mmio_read_32(rlockr), mmio_read_32(cidcfgr));
++}
++
++#define STM32MP25_PWR_RSECCFGR U(0x100)
++#define STM32MP25_PWR_RPRIVCFGR U(0x104)
++#define STM32MP25_PWR_RCIDCFGR(id) (U(0x108) + U(0x4) * (id))
++
++static void stm32mp25_pwr_unlock_resource(unsigned int id, const char *name)
++{
++	uint32_t bit = BIT_32(id);
++	uintptr_t seccfgr = PWR_BASE + STM32MP25_PWR_RSECCFGR;
++	uintptr_t privcfgr = PWR_BASE + STM32MP25_PWR_RPRIVCFGR;
++	uintptr_t cidcfgr = PWR_BASE + STM32MP25_PWR_RCIDCFGR(id);
++	uint32_t sec = mmio_read_32(seccfgr);
++	uint32_t priv = mmio_read_32(privcfgr);
++	uint32_t cid = mmio_read_32(cidcfgr);
++
++	NOTICE("PWR RIF: %s before sec=%x priv=%x cid=%x\n",
++	       name, sec, priv, cid);
++
++	mmio_clrbits_32(seccfgr, bit);
++	mmio_clrbits_32(privcfgr, bit);
++	mmio_write_32(cidcfgr, 0U);
++
++	NOTICE("PWR RIF: %s after sec=%x priv=%x cid=%x\n",
++	       name, mmio_read_32(seccfgr), mmio_read_32(privcfgr),
++	       mmio_read_32(cidcfgr));
++}
++
++#define STM32MP25_TAMP_SECCFGR U(0x20)
++#define STM32MP25_TAMP_PRIVCFGR U(0x24)
++#define STM32MP25_TAMP_CIDCFGR(id) (U(0x80) + U(0x4) * (id))
++#define STM32MP25_TAMP_RES0_SEC BIT_32(31)
++#define STM32MP25_TAMP_RES0_PRIV BIT_32(31)
++#define STM32MP25_TAMP_RES1_SEC BIT_32(15)
++#define STM32MP25_TAMP_RES1_PRIV (BIT_32(15) | BIT_32(29))
++#define STM32MP25_TAMP_RES2_SEC BIT_32(14)
++#define STM32MP25_TAMP_RES2_PRIV (BIT_32(14) | BIT_32(30))
++
++static void stm32mp25_tamp_unlock_resource(unsigned int id, uint32_t sec_mask,
++					  uint32_t priv_mask, const char *name)
++{
++	uintptr_t seccfgr = TAMP_BASE + STM32MP25_TAMP_SECCFGR;
++	uintptr_t privcfgr = TAMP_BASE + STM32MP25_TAMP_PRIVCFGR;
++	uintptr_t cidcfgr = TAMP_BASE + STM32MP25_TAMP_CIDCFGR(id);
++	uint32_t sec = mmio_read_32(seccfgr);
++	uint32_t priv = mmio_read_32(privcfgr);
++	uint32_t cid = mmio_read_32(cidcfgr);
++
++	NOTICE("TAMP RIF: %s before sec=%x priv=%x cid=%x\n",
++	       name, sec, priv, cid);
++
++	mmio_clrbits_32(seccfgr, sec_mask);
++	mmio_clrbits_32(privcfgr, priv_mask);
++	mmio_write_32(cidcfgr, 0U);
++
++	NOTICE("TAMP RIF: %s after sec=%x priv=%x cid=%x\n",
++	       name, mmio_read_32(seccfgr), mmio_read_32(privcfgr),
++	       mmio_read_32(cidcfgr));
++}
++
++static void stm32mp25_tamp_unlock_resource0(const char *name)
++{
++	stm32mp25_tamp_unlock_resource(0U, STM32MP25_TAMP_RES0_SEC,
++				       STM32MP25_TAMP_RES0_PRIV, name);
++}
++
++static void stm32mp25_tamp_unlock_resource1(const char *name)
++{
++	stm32mp25_tamp_unlock_resource(1U, STM32MP25_TAMP_RES1_SEC,
++				       STM32MP25_TAMP_RES1_PRIV, name);
++}
++
++static void stm32mp25_tamp_unlock_resource2(const char *name)
++{
++	stm32mp25_tamp_unlock_resource(2U, STM32MP25_TAMP_RES2_SEC,
++				       STM32MP25_TAMP_RES2_PRIV, name);
++}
++#endif
++
+ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
+ 				u_register_t arg2, u_register_t arg3)
+ {
+@@ -107,6 +249,17 @@
+ 				bl33_image_ep_info.args.arg1 = 0U;
+ 				bl33_image_ep_info.args.arg2 = 0U;
+ 			}
++#if !defined(SPD_opteed)
++			/*
++			 * No OP-TEE: BL33 is the Linux kernel, pass it the
++			 * HW_CONFIG (device tree) base in x0 per the arm64
++			 * boot protocol.
++			 */
++			bl33_image_ep_info.args.arg0 = STM32MP_HW_CONFIG_BASE;
++			bl33_image_ep_info.args.arg1 = 0U;
++			bl33_image_ep_info.args.arg2 = 0U;
++			bl33_image_ep_info.args.arg3 = 0U;
++#endif
+ 		}
+ 
+ 		if (bl_params->image_id == BL32_IMAGE_ID) {
+@@ -184,6 +337,139 @@
+ 
+ 	switch (type) {
+ 	case NON_SECURE:
++#if 0
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_TIM16_ID, "TIM16");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_TIM17_ID, "TIM17");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_TIM20_ID, "TIM20");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_LPTIM1_ID, "LPTIM1");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_LPTIM2_ID, "LPTIM2");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_I2C7_ID, "I2C7");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_LTDC_CMN_ID, "LTDC_CMN");
++		stm32mp25_rifsc_unlock_peripheral(STM32MP25_RIFSC_VREFBUF_ID, "VREFBUF");
++		stm32mp25_rcc_unlock_resource(0U, "RCC_R0_HSI");
++		stm32mp25_rcc_unlock_resource(1U, "RCC_R1_HSE");
++		stm32mp25_rcc_unlock_resource(2U, "RCC_R2_MSI");
++		stm32mp25_rcc_unlock_resource(3U, "RCC_R3_LSI");
++		stm32mp25_rcc_unlock_resource(4U, "RCC_R4_LSE");
++		stm32mp25_rcc_unlock_resource(5U, "RCC_R5_PLL1");
++		stm32mp25_rcc_unlock_resource(6U, "RCC_R6_PLL2");
++		stm32mp25_rcc_unlock_resource(7U, "RCC_R7_PLL3");
++		stm32mp25_rcc_unlock_resource(8U, "RCC_R8_PLL4");
++		stm32mp25_rcc_unlock_resource(9U, "RCC_R9_PLL5");
++		stm32mp25_rcc_unlock_resource(10U, "RCC_R10_PLL6");
++		stm32mp25_rcc_unlock_resource(11U, "RCC_R11_PLL7");
++		stm32mp25_rcc_unlock_resource(12U, "RCC_R12_PLL8");
++		stm32mp25_rcc_unlock_resource(13U, "RCC_R13_HSI_KER");
++		stm32mp25_rcc_unlock_resource(14U, "RCC_R14_HSE_KER");
++		stm32mp25_rcc_unlock_resource(15U, "CK_KER_I2C7");
++		stm32mp25_rcc_unlock_resource(16U, "RCC_R16_MSI_KER");
++		stm32mp25_rcc_unlock_resource(17U, "RCC_R17_ICN_APB1");
++		stm32mp25_rcc_unlock_resource(18U, "RCC_R18_ICN_APB2");
++		stm32mp25_rcc_unlock_resource(19U, "RCC_R19_ICN_APB3");
++		stm32mp25_rcc_unlock_resource(20U, "RCC_R20_ICN_APB4");
++		stm32mp25_rcc_unlock_resource(21U, "RCC_R21_ICN_APBDBG");
++		stm32mp25_rcc_unlock_resource(22U, "RCC_R22_TIMG1");
++		stm32mp25_rcc_unlock_resource(23U, "RCC_R23_TIMG2");
++		stm32mp25_rcc_unlock_resource(24U, "RCC_R24_ICN_HS_MCU");
++		stm32mp25_rcc_unlock_resource(25U, "RCC_R25_ICN_SDMMC");
++		stm32mp25_rcc_unlock_resource(26U, "RCC_R26_ICN_DDR");
++		stm32mp25_rcc_unlock_resource(27U, "CK_KER_LTDC");
++		stm32mp25_rcc_unlock_resource(28U, "CK_KER_DSIPHY");
++		stm32mp25_rcc_unlock_resource(29U, "CK_KER_DCMIPP");
++		stm32mp25_rcc_unlock_resource(30U, "CK_KER_CSITXESC");
++		stm32mp25_rcc_unlock_resource(31U, "CK_KER_CSIPHY");
++		stm32mp25_rcc_unlock_resource(32U, "CK_KER_LVDSPHY");
++		stm32mp25_rcc_unlock_resource(33U, "CK_KER_STGEN");
++		stm32mp25_rcc_unlock_resource(34U, "CK_KER_USB3PCIEPHY");
++		stm32mp25_rcc_unlock_resource(35U, "RCC_TIM16CFGR");
++		stm32mp25_rcc_unlock_resource(36U, "RCC_TIM17CFGR");
++		stm32mp25_rcc_unlock_resource(37U, "RCC_TIM20CFGR");
++		stm32mp25_rcc_unlock_resource(38U, "CK_KER_LPTIM1");
++		stm32mp25_rcc_unlock_resource(39U, "CK_KER_LPTIM2");
++		stm32mp25_rcc_unlock_resource(40U, "CK_KER_LPTIM3");
++		stm32mp25_rcc_unlock_resource(41U, "CK_KER_LPTIM4");
++		stm32mp25_rcc_unlock_resource(42U, "CK_KER_LPTIM5");
++		stm32mp25_rcc_unlock_resource(43U, "RCC_XBAR43");
++		stm32mp25_rcc_unlock_resource(44U, "RCC_XBAR44");
++		stm32mp25_rcc_unlock_resource(45U, "RCC_XBAR45");
++		stm32mp25_rcc_unlock_resource(46U, "RCC_XBAR46");
++		stm32mp25_rcc_unlock_resource(47U, "RCC_XBAR47");
++		stm32mp25_rcc_unlock_resource(48U, "RCC_XBAR48");
++		stm32mp25_rcc_unlock_resource(49U, "RCC_XBAR49");
++		stm32mp25_rcc_unlock_resource(50U, "RCC_XBAR50");
++		stm32mp25_rcc_unlock_resource(51U, "RCC_XBAR51");
++		stm32mp25_rcc_unlock_resource(52U, "RCC_XBAR52");
++		stm32mp25_rcc_unlock_resource(53U, "RCC_XBAR53");
++		stm32mp25_rcc_unlock_resource(54U, "RCC_XBAR54");
++		stm32mp25_rcc_unlock_resource(55U, "RCC_XBAR55");
++		stm32mp25_rcc_unlock_resource(56U, "RCC_XBAR56");
++		stm32mp25_rcc_unlock_resource(57U, "RCC_XBAR57");
++		stm32mp25_rcc_unlock_resource(58U, "RCC_XBAR58");
++		stm32mp25_rcc_unlock_resource(59U, "RCC_XBAR59");
++		stm32mp25_rcc_unlock_resource(60U, "RCC_XBAR60");
++		stm32mp25_rcc_unlock_resource(61U, "RCC_XBAR61");
++		stm32mp25_rcc_unlock_resource(62U, "RCC_XBAR62");
++		stm32mp25_rcc_unlock_resource(63U, "RCC_XBAR63");
++		stm32mp25_rcc_unlock_resource(64U, "RCC_XBAR64");
++		stm32mp25_rcc_unlock_resource(65U, "RCC_XBAR65");
++		stm32mp25_rcc_unlock_resource(66U, "RCC_XBAR66");
++		stm32mp25_rcc_unlock_resource(67U, "RCC_XBAR67");
++		stm32mp25_rcc_unlock_resource(68U, "RCC_XBAR68");
++		stm32mp25_rcc_unlock_resource(69U, "RCC_XBAR69");
++		stm32mp25_rcc_unlock_resource(70U, "RCC_XBAR70");
++		stm32mp25_rcc_unlock_resource(71U, "RCC_XBAR71");
++		stm32mp25_rcc_unlock_resource(72U, "RCC_XBAR72");
++		stm32mp25_rcc_unlock_resource(73U, "RCC_DEBUG_CFGR");
++		stm32mp25_rcc_unlock_resource(74U, "RCC_SYSRAM_CFGR");
++		stm32mp25_rcc_unlock_resource(75U, "RCC_VDERAM_CFGR");
++		stm32mp25_rcc_unlock_resource(76U, "RCC_RETRAM_CFGR");
++		stm32mp25_rcc_unlock_resource(77U, "RCC_BKPSRAM_CFGR");
++		stm32mp25_rcc_unlock_resource(78U, "RCC_SRAM1_CFGR");
++		stm32mp25_rcc_unlock_resource(79U, "RCC_SRAM2_CFGR");
++		stm32mp25_rcc_unlock_resource(80U, "RCC_SRAM3_CFGR");
++		stm32mp25_rcc_unlock_resource(81U, "RCC_SRAM4_CFGR");
++		stm32mp25_rcc_unlock_resource(82U, "RCC_SRAM5_CFGR");
++		stm32mp25_rcc_unlock_resource(83U, "RCC_SRAM6_CFGR");
++		stm32mp25_rcc_unlock_resource(84U, "RCC_SRAM7_CFGR");
++		stm32mp25_rcc_unlock_resource(85U, "RCC_SRAM8_CFGR");
++		stm32mp25_rcc_unlock_resource(86U, "RCC_SRAM9_CFGR");
++		stm32mp25_rcc_unlock_resource(87U, "RCC_SRAM10_CFGR");
++		stm32mp25_rcc_unlock_resource(88U, "RCC_SRAM11_CFGR");
++		stm32mp25_rcc_unlock_resource(89U, "RCC_SRAM12_CFGR");
++		stm32mp25_rcc_unlock_resource(90U, "RCC_SRAM13_CFGR");
++		stm32mp25_rcc_unlock_resource(91U, "RCC_SRAM14_CFGR");
++		stm32mp25_rcc_unlock_resource(92U, "RCC_SRAM15_CFGR");
++		stm32mp25_rcc_unlock_resource(93U, "RCC_SRAM16_CFGR");
++		stm32mp25_rcc_unlock_resource(94U, "RCC_SRAM17_CFGR");
++		stm32mp25_rcc_unlock_resource(95U, "RCC_SRAM18_CFGR");
++		stm32mp25_rcc_unlock_resource(96U, "RCC_SRAM19_CFGR");
++		stm32mp25_rcc_unlock_resource(97U, "RCC_SRAM20_CFGR");
++		stm32mp25_rcc_unlock_resource(98U, "RCC_SRAM21_CFGR");
++		stm32mp25_rcc_unlock_resource(99U, "RCC_SRAM22_CFGR");
++		stm32mp25_rcc_unlock_resource(100U, "RCC_SRAM23_CFGR");
++		stm32mp25_rcc_unlock_resource(101U, "RCC_SRAM24_CFGR");
++		stm32mp25_rcc_unlock_resource(102U, "RCC_R102_RTC_TAMP_CFGR");
++		stm32mp25_rcc_unlock_resource(103U, "RCC_RETRAM_CFGR");
++		stm32mp25_rcc_unlock_resource(104U, "RCC_R104_CFGR");
++		stm32mp25_rcc_unlock_resource(105U, "RCC_R105_CFGR");
++		stm32mp25_rcc_unlock_resource(106U, "RCC_R106_CFGR");
++		stm32mp25_rcc_unlock_resource(108U, "RCC_R108_CFGR");
++		stm32mp25_rcc_unlock_resource(109U, "RCC_R109_CFGR");
++		stm32mp25_rcc_unlock_resource(110U, "RCC_R110_OSPI1_CFGR");
++		stm32mp25_rcc_unlock_resource(111U, "RCC_R111_OSPI2_CFGR");
++		stm32mp25_rcc_unlock_resource(112U, "RCC_R112_FMC_CFGR");
++		stm32mp25_rcc_unlock_resource(113U, "RCC_R113_HSIFMON_CFGR");
++		stm32mp25_pwr_unlock_resource(0U, "PWR_R0_MONITORS");
++		stm32mp25_pwr_unlock_resource(1U, "PWR_R1_RAM_LOW_POWER");
++		stm32mp25_pwr_unlock_resource(2U, "PWR_R2_CPU1_POWER");
++		stm32mp25_pwr_unlock_resource(3U, "PWR_R3_CPU2_POWER");
++		stm32mp25_pwr_unlock_resource(4U, "PWR_R4_D3_POWER");
++		stm32mp25_pwr_unlock_resource(5U, "PWR_R5_VDDIO2_MON");
++		stm32mp25_pwr_unlock_resource(6U, "PWR_R6_VDDIO1_MON");
++		stm32mp25_tamp_unlock_resource0("TAMP_RESOURCE_0");
++		stm32mp25_tamp_unlock_resource1("TAMP_RESOURCE_1");
++		stm32mp25_tamp_unlock_resource2("TAMP_RESOURCE_2");
++#endif
+ 		next_image_info = &bl33_image_ep_info;
+ 		break;
+ 
+@@ -203,7 +489,7 @@
+ 	return next_image_info;
+ }
+ 
+-#if STM32MP_UART_PROGRAMMER || STM32MP_USB_PROGRAMMER
++#if STM32MP_UART_PROGRAMMER
+ static const plat_psci_ops_t null_psci_ops;
+ 
+ /* Stub PSCI platform functions */
+--- a/plat/st/stm32mp2/include/platform_def.h
++++ b/plat/st/stm32mp2/include/platform_def.h
+@@ -94,7 +94,7 @@
+ #define PLAT_STM32MP_NS_IMAGE_OFFSET	BL33_BASE
+ 
+ /* Needed by STM32CubeProgrammer support */
+-#define DWL_BUFFER_SIZE			U(0x01000000)
++#define DWL_BUFFER_SIZE			U(0x02000000)
+ #if STM32MP_DDR_FIP_IO_STORAGE
+ #define DWL_DDR_BUFFER_BASE		STM32MP_SYSRAM_BASE
+ #define DWL_DDR_BUFFER_SIZE		U(0x0000A000)
+--- a/plat/st/stm32mp2/include/stm32mp2_private.h
++++ b/plat/st/stm32mp2/include/stm32mp2_private.h
+@@ -39,6 +39,7 @@
+ void stm32mp_syscfg_set_icn_qos(void);
+ 
+ int stm32mp2_pwr_init_io_domains(void);
++void stm32mp2_pwr_enable_io_supplies(void);
+ 
+ /* Get RISAF platform instance ID from peripheral IO memory base address */
+ int stm32_risaf_get_instance(uintptr_t base);
+--- a/plat/st/stm32mp2/plat_bl2_mem_params_desc.c
++++ b/plat/st/stm32mp2/plat_bl2_mem_params_desc.c
+@@ -73,7 +73,11 @@
+ 				      VERSION_2, image_info_t,
+ 				      IMAGE_ATTRIB_SKIP_LOADING),
+ 
++#if defined(SPD_opteed)
+ 		.next_handoff_image_id = BL32_IMAGE_ID,
++#else
++		.next_handoff_image_id = BL33_IMAGE_ID,
++#endif
+ 	},
+ 
+ 	/* Fill SoC FW config related information */
+@@ -91,6 +95,7 @@
+ 		.next_handoff_image_id = INVALID_IMAGE_ID,
+ 	},
+ 
++#if defined(SPD_opteed)
+ 	/* Fill BL32 related information */
+ 	{
+ 		.image_id = BL32_IMAGE_ID,
+@@ -120,6 +125,7 @@
+ 
+ 		.next_handoff_image_id = INVALID_IMAGE_ID,
+ 	},
++#endif /* SPD_opteed */
+ 
+ 	/* Fill HW_CONFIG related information if it exists */
+ 	{
+--- a/plat/st/stm32mp2/platform.mk
++++ b/plat/st/stm32mp2/platform.mk
+@@ -299,9 +299,7 @@
+ 
+ PLAT_BL_COMMON_SOURCES  	+=	drivers/st/nvmem/stm32mp_tamp_nvram_mp2.c
+ 
+-ifeq ($(filter 1,${STM32MP_UART_PROGRAMMER} ${STM32MP_USB_PROGRAMMER}),)
+ PLAT_BL_COMMON_SOURCES  	+=	plat/st/stm32mp2/stm32mp2_context.c
+-endif
+ 
+ BL2_SOURCES			+=	plat/st/stm32mp2/plat_bl2_mem_params_desc.c
+ 
+@@ -311,6 +309,8 @@
+ 
+ BL2_SOURCES			+=	drivers/st/rif/stm32_rifsc.c
+ 
++BL2_SOURCES			+=	plat/st/stm32mp2/stm32mp2_rif_handoff.c
++
+ ifeq ($(STM32MP_M33_TDCID),0)
+ BL2_SOURCES			+=	drivers/st/rif/stm32mp2_risaf.c
+ endif
+@@ -386,12 +386,10 @@
+ BL31_SOURCES			+=	plat/st/stm32mp2/bl31_plat_setup.c			\
+ 					plat/st/stm32mp2/stm32mp2_topology.c
+ 
+-ifeq ($(filter 1,${STM32MP_UART_PROGRAMMER} ${STM32MP_USB_PROGRAMMER}),)
+ BL31_SOURCES			+=	plat/st/stm32mp2/stm32mp2_pm.c				\
+ 					common/tf_crc32.c
+ 
+ BL31_CPPFLAGS += -march=armv8-a+crc
+-endif
+ 
+ ifeq ($(STM32MP_M33_TDCID),0)
+ BL31_SOURCES			+=	drivers/st/ddr/stm32mp2_ddr_helpers.c
+--- a/plat/st/stm32mp2/stm32mp2_def.h
++++ b/plat/st/stm32mp2/stm32mp2_def.h
+@@ -298,7 +298,7 @@
+ #define STM32MP_FW_CONFIG_BASE		STM32MP_SYSRAM_BASE
+ 
+ #define STM32MP_BL33_BASE		(STM32MP_DDR_BASE + U(0x04000000))
+-#define STM32MP_BL33_MAX_SIZE		U(0x400000)
++#define STM32MP_BL33_MAX_SIZE		U(0x02000000)
+ #define STM32MP_HW_CONFIG_BASE		(STM32MP_BL33_BASE + \
+ 					STM32MP_BL33_MAX_SIZE)
+ #define STM32MP_HW_CONFIG_MAX_SIZE	U(0x40000)
+--- a/plat/st/stm32mp2/stm32mp2_pm.c
++++ b/plat/st/stm32mp2/stm32mp2_pm.c
+@@ -368,10 +368,6 @@
+ {
+ 	unsigned int core_id = MPIDR_AFFLVL0_VAL(mpidr);
+ 
+-	if (stm32mp_is_single_core()) {
+-		return PSCI_E_NOT_SUPPORTED;
+-	}
+-
+ 	stm32mp_state_set(core_id, STATE_START, true);
+ 
+ 	if (core_id == STM32MP_PRIMARY_CPU) {
+--- a/plat/st/stm32mp2/stm32mp2_pwr.c
++++ b/plat/st/stm32mp2/stm32mp2_pwr.c
+@@ -6,6 +6,7 @@
+ 
+ #include <common/debug.h>
+ #include <common/fdt_wrappers.h>
++#include <drivers/delay_timer.h>
+ #include <drivers/st/regulator.h>
+ #include <lib/mmio.h>
+ #include <lib/utils_def.h>
+@@ -126,6 +127,59 @@
+ }
+ 
+ /*
++ * Validate an independent VDDIO I/O supply domain so its pads leave the
++ * isolated (high-Z) state. Mirrors OP-TEE stm32mp25_pwr_regul.c
++ * pwr_enable_reg(): set the voltage monitor (VMEN), wait for the supply
++ * ready flag (RDY, <=10ms), then set supply-valid (SV) which connects the
++ * pads. Required when TF-A boots the OS directly (no OP-TEE/U-Boot to do it),
++ * e.g. for the SD card on VDDIO1 -- otherwise SDMMC1 pins never toggle.
++ */
++static int pwr_enable_io_supply(uint32_t cr_off, uint32_t vmen,
++				uint32_t rdy, uint32_t sv)
++{
++	uintptr_t reg = stm32mp_pwr_base() + cr_off;
++	int i;
++
++	if ((mmio_read_32(reg) & sv) != 0U) {
++		return 0;
++	}
++
++	mmio_setbits_32(reg, vmen);
++
++	for (i = 0; i < 1000; i++) {
++		if ((mmio_read_32(reg) & rdy) != 0U) {
++			break;
++		}
++		udelay(10);
++	}
++
++	if ((mmio_read_32(reg) & rdy) == 0U) {
++		mmio_clrbits_32(reg, vmen);
++		return -1;
++	}
++
++	mmio_setbits_32(reg, sv);
++	mmio_clrbits_32(reg, vmen);
++
++	return 0;
++}
++
++void stm32mp2_pwr_enable_io_supplies(void)
++{
++	if (pwr_enable_io_supply(PWR_CR8, PWR_CR8_VDDIO1VMEN,
++				 PWR_CR8_VDDIO1RDY, PWR_CR8_VDDIO1SV) != 0) {
++		WARN("PWR: VDDIO1 (SD) supply not ready\n");
++	} else {
++		NOTICE("PWR: VDDIO1 (SD) I/O domain validated\n");
++	}
++
++	if (pwr_enable_io_supply(PWR_CR7, PWR_CR7_VDDIO2VMEN,
++				 PWR_CR7_VDDIO2RDY, PWR_CR7_VDDIO2SV) != 0) {
++		WARN("PWR: VDDIO2 supply not ready\n");
++	}
++}
++
++/*
+  * @brief  Enable IO compensation for the IO domains that are already ON,
+  *         and set domain to high speed depending on power supply voltage.
+  * @retval 0 or error.
+--- a/plat/st/stm32mp2/stm32mp2_rif_handoff.c
++++ b/plat/st/stm32mp2/stm32mp2_rif_handoff.c
+@@ -0,0 +1,215 @@
++/*
++ * Copyright (c) 2026, STMicroelectronics - All Rights Reserved
++ *
++ * SPDX-License-Identifier: BSD-3-Clause
++ *
++ * Program the RIF firewall hand-off state for the OP-TEE-less lean
++ * image: every resource non-secure and CID-filter-free, except CRYP2
++ * and IWDG3 which belong to the Cortex-M33 (CID2). Values mirror the
++ * state audited on a running board (rif_audit.sh ground truth).
++ * While OP-TEE is still present it re-applies the same policy later;
++ * once BL32 is dropped this routine is the single owner.
++ */
++
++#include <common/debug.h>
++#include <drivers/clk.h>
++#include <lib/mmio.h>
++
++#include <dt-bindings/clock/stm32mp25-clks.h>
++#include <platform_def.h>
++
++/* RIFSC (base RIFSC_BASE) */
++#define RIFSC_RISC_SECCFGR(i)		(U(0x10) + U(4) * (i))
++#define RIFSC_RISC_PRIVCFGR(i)		(U(0x30) + U(4) * (i))
++#define RIFSC_RISC_PER_CIDCFGR(i)	(U(0x100) + U(8) * (i))
++#define RIFSC_RIMC_ATTR(i)		(U(0xC10) + U(4) * (i))
++#define RIFSC_PER_MAX			U(128)
++#define RIFSC_ID_CRYP2			U(97)
++#define RIFSC_ID_IWDG3			U(100)
++#define RIFSC_CID2_LOCKED		U(0x21)	/* CFEN | SCID=CID2 */
++
++/* RCC RIF (base RCC_BASE) */
++#define RCC_SECCFGR(i)			(U(0x00) + U(4) * (i))
++#define RCC_PRIVCFGR(i)			(U(0x10) + U(4) * (i))
++#define RCC_R_CIDCFGR(i)		(U(0x30) + U(8) * (i))
++#define RCC_RES_MAX			U(114)
++
++/* PWR RIF (base PWR_BASE) */
++#define PWR_RSECCFGR			U(0x100)
++#define PWR_RPRIVCFGR			U(0x104)
++#define PWR_R_CIDCFGR(i)		(U(0x108) + U(4) * (i))
++#define PWR_WIOSECCFGR			U(0x180)
++#define PWR_WIOPRIVCFGR			U(0x184)
++#define PWR_WIO_CIDCFGR(i)		(U(0x188) + U(8) * ((i) - U(1)))
++#define PWR_R_MAX			U(7)
++#define PWR_WIO_MAX			U(6)
++
++/* EXTI RIF */
++#define EXTI_SECCFGR(i)			(U(0x14) + U(0x20) * (i))
++#define EXTI_PRIVCFGR(i)		(U(0x18) + U(0x20) * (i))
++#define EXTI_EN_CIDCFGR(i)		(U(0x180) + U(4) * (i))
++#define EXTI_WORDS			U(3)
++#define EXTI_LINES_MAX			U(96)
++
++/* GPIO RIF (per bank) */
++#define GPIO_SECCFGR			U(0x30)
++#define GPIO_PRIVCFGR			U(0x34)
++#define GPIO_CIDCFGR(p)			(U(0x50) + U(8) * (p))
++#define GPIO_PINS			U(16)
++
++/* TAMP RIF + backup register zones (base TAMP_BASE) */
++#define TAMP_SECCFGR			U(0x20)
++#define TAMP_PRIVCFGR			U(0x24)
++#define TAMP_BKPRIFR(i)			(U(0x70) + U(4) * ((i) - U(1)))
++#define TAMP_CIDCFGR(i)			(U(0x80) + U(4) * (i))
++#define TAMP_SECCFGR_VAL		U(0x00600030)
++#define TAMP_BKPRIFR1_VAL		U(0x18)
++#define TAMP_BKPRIFR2_VAL		U(0x48)
++#define TAMP_BKPRIFR3_VAL		U(0x0078006C)
++
++static const uint32_t rimc_attr_val[16] = {
++	U(0x214), U(0x200), U(0x200), U(0x000),
++	U(0x200), U(0x200), U(0x200), U(0x200),
++	U(0x200), U(0x200), U(0x200), U(0x204),
++	U(0x204), U(0x204), U(0x200), U(0x200),
++};
++
++struct gpio_bank_cfg {
++	uintptr_t base;
++	unsigned long clock;
++};
++
++static const struct gpio_bank_cfg gpio_banks[] = {
++	{ GPIOA_BASE, CK_BUS_GPIOA },
++	{ GPIOB_BASE, CK_BUS_GPIOB },
++	{ GPIOC_BASE, CK_BUS_GPIOC },
++	{ GPIOD_BASE, CK_BUS_GPIOD },
++	{ GPIOE_BASE, CK_BUS_GPIOE },
++	{ GPIOF_BASE, CK_BUS_GPIOF },
++	{ GPIOG_BASE, CK_BUS_GPIOG },
++	{ GPIOH_BASE, CK_BUS_GPIOH },
++	{ GPIOI_BASE, CK_BUS_GPIOI },
++	{ GPIOJ_BASE, CK_BUS_GPIOJ },
++	{ GPIOK_BASE, CK_BUS_GPIOK },
++	{ GPIOZ_BASE, CK_BUS_GPIOZ },
++};
++
++void stm32mp2_rif_handoff(void)
++{
++	uint32_t i;
++	uint32_t p;
++
++	/* RIFSC peripherals */
++	for (i = 0U; i < RIFSC_PER_MAX; i++) {
++		uint32_t cid = 0U;
++
++		if ((i == RIFSC_ID_CRYP2) || (i == RIFSC_ID_IWDG3)) {
++			cid = RIFSC_CID2_LOCKED;
++		}
++
++		mmio_write_32(RIFSC_BASE + RIFSC_RISC_PER_CIDCFGR(i), cid);
++	}
++
++	for (i = 0U; i < 6U; i++) {
++		uint32_t sec = (i == 3U) ? U(0x12) : 0U;
++
++		mmio_write_32(RIFSC_BASE + RIFSC_RISC_SECCFGR(i), sec);
++		mmio_write_32(RIFSC_BASE + RIFSC_RISC_PRIVCFGR(i), sec);
++	}
++
++	for (i = 0U; i < ARRAY_SIZE(rimc_attr_val); i++) {
++		mmio_write_32(RIFSC_BASE + RIFSC_RIMC_ATTR(i),
++			      rimc_attr_val[i]);
++	}
++
++	/* RCC resources */
++	for (i = 0U; i < RCC_RES_MAX; i++) {
++		mmio_write_32(RCC_BASE + RCC_R_CIDCFGR(i), 0U);
++	}
++
++	for (i = 0U; i < 4U; i++) {
++		mmio_write_32(RCC_BASE + RCC_SECCFGR(i), 0U);
++		mmio_write_32(RCC_BASE + RCC_PRIVCFGR(i), 0U);
++	}
++
++	/* PWR resources and wake-up IOs */
++	for (i = 0U; i < PWR_R_MAX; i++) {
++		mmio_write_32(PWR_BASE + PWR_R_CIDCFGR(i), 0U);
++	}
++
++	for (i = 1U; i <= PWR_WIO_MAX; i++) {
++		mmio_write_32(PWR_BASE + PWR_WIO_CIDCFGR(i), 0U);
++	}
++
++	mmio_write_32(PWR_BASE + PWR_RSECCFGR, 0U);
++	mmio_write_32(PWR_BASE + PWR_RPRIVCFGR, 0U);
++	mmio_write_32(PWR_BASE + PWR_WIOSECCFGR, 0U);
++	mmio_write_32(PWR_BASE + PWR_WIOPRIVCFGR, 0U);
++
++	/* EXTI1/EXTI2 lines */
++	for (i = 0U; i < EXTI_LINES_MAX; i++) {
++		mmio_write_32(STM32MP_EXTI1_BASE + EXTI_EN_CIDCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI2_BASE + EXTI_EN_CIDCFGR(i), 0U);
++	}
++
++	for (i = 0U; i < EXTI_WORDS; i++) {
++		mmio_write_32(STM32MP_EXTI1_BASE + EXTI_SECCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI1_BASE + EXTI_PRIVCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI2_BASE + EXTI_SECCFGR(i), 0U);
++		mmio_write_32(STM32MP_EXTI2_BASE + EXTI_PRIVCFGR(i), 0U);
++	}
++
++	/* GPIO banks A..K and Z */
++	for (i = 0U; i < ARRAY_SIZE(gpio_banks); i++) {
++		if (clk_enable(gpio_banks[i].clock) != 0) {
++			continue;
++		}
++
++		for (p = 0U; p < GPIO_PINS; p++) {
++			mmio_write_32(gpio_banks[i].base + GPIO_CIDCFGR(p),
++				      0U);
++		}
++
++		mmio_write_32(gpio_banks[i].base + GPIO_SECCFGR, 0U);
++		mmio_write_32(gpio_banks[i].base + GPIO_PRIVCFGR, 0U);
++	}
++
++	/* TAMP: keep the audited backup-register zoning, no CID filtering */
++	for (i = 0U; i < 4U; i++) {
++		mmio_write_32(TAMP_BASE + TAMP_CIDCFGR(i), 0U);
++	}
++
++	mmio_write_32(TAMP_BASE + TAMP_SECCFGR, TAMP_SECCFGR_VAL);
++	mmio_write_32(TAMP_BASE + TAMP_PRIVCFGR, 0U);
++	mmio_write_32(TAMP_BASE + TAMP_BKPRIFR(1), TAMP_BKPRIFR1_VAL);
++	mmio_write_32(TAMP_BASE + TAMP_BKPRIFR(2), TAMP_BKPRIFR2_VAL);
++	mmio_write_32(TAMP_BASE + TAMP_BKPRIFR(3), TAMP_BKPRIFR3_VAL);
++
++	/*
++	 * Open the whole DDR to the non-secure world via the RISAF4 base
++	 * region (region 1, BREN). Done here, after BL2 has loaded all
++	 * images with secure access, because once the base region is
++	 * non-secure BL2 can no longer write DDR. The secure carve-outs
++	 * (bl31_context, op_tee) configured from fw-config override their
++	 * own windows. Without OP-TEE nothing else would open NS DDR, so
++	 * BL33/Linux at 0x84000000 would be inaccessible.
++	 */
++	{
++		uintptr_t rb = RISAF4_BASE;
++		uint32_t hwcfgr = mmio_read_32(rb + U(0xFF0));
++		uint32_t mlsb = (hwcfgr >> 16) & 0xFFU;
++		uint32_t mmsb = mlsb + ((hwcfgr >> 24) & 0xFFU) - 1U;
++		uint32_t amask = GENMASK_32(mmsb, mlsb);
++
++		/* RISAF4 region 1 = NS base region covering all of DDR */
++		mmio_clrbits_32(rb + U(0x40), BIT(0));            /* clear BREN */
++		mmio_clrsetbits_32(rb + U(0x44), amask, 0U);      /* STARTR = 0 */
++		mmio_clrsetbits_32(rb + U(0x48), amask, 0xFFFFFFFFU & amask); /* ENDR */
++		mmio_clrsetbits_32(rb + U(0x4C), U(0x00FF00FF), U(0x00030003)); /* CID0|CID1 RW */
++		mmio_clrsetbits_32(rb + U(0x40), U(0x00FF8101), BIT(0)); /* BREN=1, SEC=0 */
++
++		NOTICE("RIF: BL2 opened DDR to non-secure world\n");
++	}
++
++	NOTICE("RIF: BL2 applied non-secure hand-off firewall state\n");
++}
