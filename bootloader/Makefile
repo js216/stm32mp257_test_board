@@ -6,18 +6,19 @@ CROSS_COMPILE ?= aarch64-none-linux-gnu-
 CC      := $(CROSS_COMPILE)gcc
 OBJCOPY := $(CROSS_COMPILE)objcopy
 
-DIRS  := drivers src
+DIRS  := drivers src utils
 SRC_C := $(wildcard $(addsuffix /*.c,$(DIRS)))
 SRC_S := $(wildcard drivers/*.S)
 OBJ   := $(patsubst %.c,build/%.o,$(SRC_C)) $(patsubst %.S,build/%.o,$(SRC_S))
 
 CFLAGS := \
-	-Idrivers -Isrc \
+	-Idrivers -Isrc -Iutils \
+	-DPRINTF_DISABLE_SUPPORT_FLOAT -DPRINTF_DISABLE_SUPPORT_EXPONENTIAL \
 	-std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wundef \
 	-Wmissing-prototypes -Wpointer-arith \
 	-Os -g3 -MMD -MP \
 	-mcpu=cortex-a35 -mlittle-endian \
-	-ffreestanding -fno-common -fno-pic -fno-pie \
+	-ffreestanding -fno-common -fno-pic -fno-pie -fno-stack-protector \
 	-ffunction-sections -fdata-sections
 
 LFLAGS := \

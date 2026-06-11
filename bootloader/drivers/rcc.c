@@ -8,6 +8,8 @@
  * Register offsets and the flexgen-channel configuration sequence are taken
  * from TF-A (drivers/st/clk/clk-stm32mp2.c, include/drivers/st/stm32mp21_rcc.h,
  * BSD-3-Clause), reduced to the single channel and gates this bootloader needs.
+ * The pre/final-divider and cross-bar status registers are polled (as TF-A
+ * does) so the divider writes are not dropped while a channel is busy.
  */
 
 #include "rcc.h"
@@ -24,6 +26,8 @@
 #define RCC_XBAR0CFGR   (RCC_BASE + 0x1018UL)
 #define RCC_PREDIV0CFGR (RCC_BASE + 0x1118UL)
 #define RCC_FINDIV0CFGR (RCC_BASE + 0x1224UL)
+#define RCC_PREDIVSR1   (RCC_BASE + 0x1218UL)
+#define RCC_FINDIVSR1   (RCC_BASE + 0x1324UL)
 
 #define XBAR_SEL_MASK 0x0000000FUL
 #define XBAR_EN       BIT(6)
@@ -35,22 +39,39 @@
 #define XBAR_SRC_HSI_KER 0x8U /* HSI kernel clock, per stm32mp25-clksrc.h */
 #define USART2_FLEX_CH   8U   /* FLEXGEN_CFG(8, HSI_KER, 0, 0) in TF-A */
 
+#define DIV_TIMEOUT 1000000U /* bounded spin so a stuck status never hangs */
+
+static void wait_status_clear(uintptr_t sr, uint32_t bit)
+{
+   unsigned int n = DIV_TIMEOUT;
+   while ((mmio_read_32(sr) & bit) != 0U) {
+      if (--n == 0U) {
+         break;
+      }
+   }
+}
+
 /* Route a flexgen channel to HSI with no division (prediv=1, findiv=1). */
 static void flexgen_to_hsi(unsigned int channel)
 {
    uintptr_t prediv = RCC_PREDIV0CFGR + (4UL * channel);
    uintptr_t findiv = RCC_FINDIV0CFGR + (4UL * channel);
    uintptr_t xbar   = RCC_XBAR0CFGR + (4UL * channel);
+   uint32_t bit     = BIT(channel); /* channel < 32 */
 
+   wait_status_clear(RCC_PREDIVSR1, bit);
    mmio_clrsetbits_32(prediv, PREDIV_MASK, 0U);
+   wait_status_clear(RCC_PREDIVSR1, bit);
+
+   wait_status_clear(RCC_FINDIVSR1, bit);
    mmio_clrsetbits_32(findiv, FINDIV_MASK, 0U);
    mmio_setbits_32(findiv, FINDIV_EN);
+   wait_status_clear(RCC_FINDIVSR1, bit);
 
+   wait_status_clear(xbar, XBAR_STS);
    mmio_clrsetbits_32(xbar, XBAR_SEL_MASK, XBAR_SRC_HSI_KER);
    mmio_setbits_32(xbar, XBAR_EN);
-   while ((mmio_read_32(xbar) & XBAR_STS) != 0U) {
-      /* wait for the cross-bar to accept the new source */
-   }
+   wait_status_clear(xbar, XBAR_STS);
 }
 
 void rcc_clock_init(void)
