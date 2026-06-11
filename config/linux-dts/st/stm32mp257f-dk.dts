@@ -229,7 +229,9 @@
 			label = "User-3";
 			linux,code = <BTN_3>;
 			gpios = <&gpioz 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-			/* gpioz button: suspect for the old probe -EINVAL, parked */
+			/* CONFIRMED: enabling this kills the whole gpio-keys probe
+			 * (-EINVAL, hardware-verified 2026-06-11); gpioz pin lookup
+			 * is broken on the lean image. Not the TAMP button. */
 			status = "disabled";
 		};
 

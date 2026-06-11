@@ -44,6 +44,25 @@
 #define FINDIV_EN     BIT(6)
 
 #define XBAR_SRC_HSI_KER 0x8U /* HSI kernel clock, per stm32mp25-clksrc.h */
+#define XBAR_SRC_PLL4    0x0U /* per stm32mp25-clksrc.h */
+
+/*
+ * PLL4 (the bus/interconnect PLL) and the NoC flexgen channels. The ROM
+ * leaves the whole interconnect on slow boot clocks; without this, DDR
+ * bandwidth from the CPU is capped around 50 MB/s no matter how fast the
+ * A35 PLL runs. Same integer-mode sequence and 40 MHz HSE * 30 = 1200 MHz
+ * as PLL2; targets from the DK clock tree (st,flexgen): ICN_HS_MCU 400,
+ * ICN_SDMMC 200, ICN_DDR 600, ICN_HSL 300, ICN_NIC 400 MHz, LSMCU = /2.
+ */
+#define RCC_PLL4CFGR1 (RCC_BASE + 0x1360UL)
+#define RCC_PLL4CFGR2 (RCC_BASE + 0x1364UL)
+#define RCC_PLL4CFGR3 (RCC_BASE + 0x1368UL)
+#define RCC_PLL4CFGR4 (RCC_BASE + 0x136CUL)
+#define RCC_PLL4CFGR6 (RCC_BASE + 0x1378UL)
+#define RCC_PLL4CFGR7 (RCC_BASE + 0x137CUL)
+#define RCC_LSMCUDIVR (RCC_BASE + 0x4D0UL)
+#define MUXSEL0_SHIFT 0U
+#define MUXSEL0_MASK  (0x3UL << MUXSEL0_SHIFT)
 #define USART2_FLEX_CH   8U   /* CK_KER_USART2 = flexgen 8 */
 #define I2C7_FLEX_CH     15U  /* CK_KER_I2C7   = flexgen 15 */
 #define SDMMC1_FLEX_CH   51U  /* CK_KER_SDMMC1 = flexgen 51 */
@@ -181,6 +200,57 @@ static void flexgen_to_hsi(unsigned int channel)
              ((mmio_read_32(xbar) & XBAR_SEL_MASK) != XBAR_SRC_HSI_KER)));
 }
 
+/* Route a flexgen channel to PLL4 with the given final divider (val+1). */
+static void flexgen_to_pll4(unsigned int channel, uint32_t findiv_val)
+{
+   uintptr_t prediv = RCC_PREDIV0CFGR + (4UL * channel);
+   uintptr_t findiv = RCC_FINDIV0CFGR + (4UL * channel);
+   uintptr_t xbar   = RCC_XBAR0CFGR + (4UL * channel);
+   uintptr_t presr  = (channel < 32U) ? RCC_PREDIVSR1 : RCC_PREDIVSR2;
+   uintptr_t finsr  = (channel < 32U) ? RCC_FINDIVSR1 : RCC_FINDIVSR2;
+   uint32_t bit     = BIT(channel & 31U);
+   unsigned int retry = 3U; /* fail fast: a stuck channel must not stall boot */
+
+   do {
+      wait_status_clear(presr, bit);
+      mmio_clrsetbits_32(prediv, PREDIV_MASK, 0U);
+      wait_status_clear(presr, bit);
+
+      wait_status_clear(finsr, bit);
+      mmio_clrsetbits_32(findiv, FINDIV_MASK, findiv_val);
+      wait_status_clear(finsr, bit);
+
+      wait_status_clear(xbar, XBAR_STS);
+      mmio_clrsetbits_32(xbar, XBAR_SEL_MASK, XBAR_SRC_PLL4);
+      mmio_setbits_32(xbar, XBAR_EN);
+      wait_status_clear(xbar, XBAR_STS);
+
+      mmio_setbits_32(findiv, FINDIV_EN);
+   } while ((--retry != 0U) &&
+            (((mmio_read_32(prediv) & PREDIV_MASK) != 0U) ||
+             ((mmio_read_32(findiv) & FINDIV_MASK) != findiv_val) ||
+             ((mmio_read_32(xbar) & XBAR_SEL_MASK) != XBAR_SRC_PLL4)));
+}
+
+int rcc_bus_clk_init(void)
+{
+   /*
+    * The ROM already runs PLL4 at 1200 MHz and clocks several of its own
+    * consumers (including the USB path) from it: stopping or
+    * reprogramming PLL4 here crashes the board mid-USB-traffic
+    * (hardware-verified). All this init does is route the one
+    * bandwidth-critical channel, ICN_DDR, onto the already-running PLL4
+    * at /2 = 600 MHz. ch0 (the CPU's own bus) must never be switched
+    * live, and the peripheral buses stay on their proven boot clocks.
+    */
+   if ((mmio_read_32(RCC_PLL4CFGR1) & PLL_CFGR1_PLLRDY) == 0U) {
+      return -1; /* PLL4 not running: leave everything at boot clocks */
+   }
+
+   flexgen_to_pll4(2U, 1U); /* ICN_DDR 600 MHz */
+   return 0;
+}
+
 /*
  * Bring up PLL2 at 600 MHz from HSE (the DDR clock source). Returns 0 once
  * the PLL reports lock, -1 on a ready/lock timeout. Follows TF-A's
@@ -283,6 +353,20 @@ int rcc_a35_pll1_init(void)
       }
    }
    mmio_clrbits_32(A35_SS_PLL_ENABLE, A35_PLL_ENABLE_NRESET_SWPLL_FF);
+
+   /*
+    * Power the PLL down before reprogramming: unlike on TF-A boots, the
+    * ROM leaves PLL1 running here, and divider writes into a running PLL
+    * do not latch -- the later "wait for lock" then passes instantly on
+    * the OLD frequency and the cluster comes back at the boot clock.
+    */
+   mmio_clrbits_32(A35_SS_PLL_ENABLE, A35_PLL_ENABLE_PD);
+   n = DIV_TIMEOUT;
+   while ((mmio_read_32(A35_SS_PLL_ENABLE) & A35_PLL_ENABLE_LOCKP) != 0U) {
+      if (--n == 0U) {
+         return -6; /* PLL would not unlock/power down */
+      }
+   }
 
    /* PLL1 reference = HSE. */
    mmio_clrsetbits_32(RCC_MUXSELCFGR, MUXSEL5_MASK,

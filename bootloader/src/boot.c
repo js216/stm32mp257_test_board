@@ -162,6 +162,10 @@ void cmd_boot(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
    /* Last console output from the FSBL: the UART belongs to Linux now. */
    my_printf("\r\nboot: Linux Image@0x%08X dtb@0x%08X (EL2, PSCI at EL3)\r\n",
              (unsigned int)BOOT_KERNEL_ADDR, (unsigned int)BOOT_DTB_ADDR);
+   uint64_t cpuectlr;
+   __asm volatile("mrs %0, S3_1_C15_C2_1" : "=r"(cpuectlr));
+   my_printf("CPUECTLR=%08X%08X\r\n", (unsigned int)(cpuectlr >> 32),
+             (unsigned int)cpuectlr);
    my_printf("A35SSC chg=%08X f1=%08X f2=%08X en=%08X muxsel=%08X\r\n",
              (unsigned int)mmio_read_32(0x48800000UL),
              (unsigned int)mmio_read_32(0x48800080UL),

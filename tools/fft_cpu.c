@@ -160,6 +160,7 @@ static inline void putpx(struct fb *b, int x, int y, uint32_t c)
 }
 
 // colour ramp green->yellow->red by normalized height h in [0,1]
+static uint32_t ramp_lut[2048]; /* per-row colour, filled once H is known */
 static uint32_t ramp(float h)
 {
 	if (h < 0) h = 0;
@@ -260,12 +261,10 @@ static void draw(struct fb *b, double t)
 		float hnorm = (db - DB_MIN) / (DB_MAX - DB_MIN);
 		int y_top = (int)((float)(H - 1) * (1.0f - hnorm));
 
-		// filled bar with vertical colour ramp
+		// filled bar with vertical colour ramp (precomputed per row)
 		uint32_t stride = b->pitch / 4;
-		for (int y = H - 1; y >= y_top; y--) {
-			float hh = (float)(H - 1 - y) / (H - 1);
-			b->px[(size_t)y * stride + x] = ramp(hh);
-		}
+		for (int y = H - 1; y >= y_top; y--)
+			b->px[(size_t)y * stride + x] = ramp_lut[y];
 		// bright trace line connecting tops
 		putpx(b, x, y_top, rgb(220, 255, 235));
 		if (x > 0) vline(b, x, prev_y, y_top, rgb(220, 255, 235));
@@ -296,6 +295,8 @@ int main(int argc, char **argv)
 	if (drm_init(card)) return 1;
 	drmSetMaster(drm_fd);
 	signal_init();
+	for (int y = 0; y < H && y < 2048; y++)
+		ramp_lut[y] = ramp((float)(H - 1 - y) / (H - 1));
 
 	double t0 = now_sec();
 	int front = 0;

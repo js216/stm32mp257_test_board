@@ -33,6 +33,14 @@ _start:
 	 * then run the FSBL concurrently on one stack, doubling/interleaving
 	 * UART output and corrupting I2C transfers. Park all but core 0 in
 	 * the PSCI holding pen. */
+	/* Coherency on FIRST (TF-A does this in the reset handler): if
+	 * SMPEN is set any later, the core can treat shareable-cacheable
+	 * memory as non-cacheable once caches are enabled. */
+	mrs	x0, S3_1_C15_C2_1	/* CPUECTLR_EL1 */
+	orr	x0, x0, #(1 << 6)	/* SMPEN */
+	msr	S3_1_C15_C2_1, x0
+	isb
+
 	mrs	x0, mpidr_el1
 	and	x0, x0, #0xffffff	/* Aff2:Aff1:Aff0 */
 	cbz	x0, 3f

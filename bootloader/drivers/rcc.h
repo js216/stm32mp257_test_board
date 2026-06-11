@@ -39,6 +39,16 @@ int rcc_pll2_init(void);
  */
 int rcc_a35_pll1_init(void);
 
+/**
+ * @brief Bring the interconnect up to speed: PLL4 at 1200 MHz and the NoC
+ *        flexgen channels (bus 400, sdmmc 200, DDR-AXI 600, hsl 300,
+ *        nic 400 MHz, LSMCU /2) per the DK clock tree. Without this the
+ *        ROM's boot clocks cap CPU-to-DDR bandwidth around 50 MB/s.
+ *
+ * @return 0 on success, negative on PLL timeout.
+ */
+int rcc_bus_clk_init(void);
+
 /** Route the SDMMC1 kernel clock (flexgen channel 51) to HSI 64 MHz. */
 void rcc_sdmmc1_clk_init(void);
 

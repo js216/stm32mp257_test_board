@@ -87,6 +87,13 @@ int main(void)
       my_printf("A35 PLL1 FAILED (%d), staying on bypass clock\r\n", a35);
    }
 
+   int bus = rcc_bus_clk_init();
+   if (bus == 0) {
+      my_printf("NoC: ddr-axi -> pll4/2 (600 MHz)\r\n");
+   } else {
+      my_printf("NoC clk FAILED (%d), staying on boot clocks\r\n", bus);
+   }
+
    cmd_init();
 
    unsigned int tick = 0;
