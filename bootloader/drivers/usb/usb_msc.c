@@ -31,11 +31,13 @@
 #define MSC_EP_NUM  1U
 #define MSC_MPS_HS  512U
 
-/* Bench contract (test_serv msc.mp257 instance): VID/PID match the MP135
- * baremetal-MSC bootloaders (0x0483:0x571d); the iSerial disambiguates the
- * boards. */
+/* Bench contract (test_serv msc.mp257 instance): VID 0x0483 with a PID
+ * distinct from the MP135 baremetal MSC (0x571d) so the bench can tell the
+ * board families apart even when both are in their bootloader MSC stage;
+ * the chip-UID iSerial then distinguishes individual boards. Keep in sync
+ * with the bench config (bug report filed 2026-06-11). */
 #define USBD_VID 0x0483U
-#define USBD_PID 0x571DU /* baremetal MSC bootloader function */
+#define USBD_PID 0x5720U /* MP257 baremetal MSC bootloader */
 
 #define CBW_SIGNATURE 0x43425355U
 #define CSW_SIGNATURE 0x53425355U
