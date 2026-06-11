@@ -14,7 +14,9 @@
 
 #include <stdint.h>
 
+#ifndef BIT
 #define BIT(n) (1UL << (n))
+#endif
 
 static inline void mmio_write_32(uintptr_t addr, uint32_t val)
 {

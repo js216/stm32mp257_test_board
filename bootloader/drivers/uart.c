@@ -36,7 +36,7 @@
 /* ISR error flags + their ICR clear bits (same positions). */
 #define USART_ERR_FLAGS (BIT(0) | BIT(1) | BIT(2) | BIT(3)) /* PE FE NE ORE */
 
-#define HSI_FREQ_HZ 64000000UL
+#define UART_CLK_HZ 64000000UL /* USART2 kernel clock = HSI (flexgen ch8) */
 #define UART_BAUD   115200UL
 
 /* USART2_TX = PA4/AF6, USART2_RX = PA8/AF8 (stm32mp25-pinctrl.dtsi). */
@@ -56,7 +56,7 @@ void uart_init(void)
    mmio_write_32(USART2_BASE + USART_CR3, 0U);
    mmio_write_32(USART2_BASE + USART_PRESC, 0U);
    mmio_write_32(USART2_BASE + USART_BRR,
-                 (HSI_FREQ_HZ + (UART_BAUD / 2UL)) / UART_BAUD);
+                 (UART_CLK_HZ + (UART_BAUD / 2UL)) / UART_BAUD);
    mmio_write_32(USART2_BASE + USART_CR1,
                  USART_CR1_UE | USART_CR1_TE | USART_CR1_RE |
                  USART_CR1_FIFOEN);

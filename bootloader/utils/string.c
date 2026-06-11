@@ -34,6 +34,19 @@ void *memcpy(void *dst, const void *src, size_t n)
    return dst;
 }
 
+int memcmp(const void *a, const void *b, size_t n)
+{
+   const unsigned char *pa = a;
+   const unsigned char *pb = b;
+
+   for (size_t i = 0; i < n; i++) {
+      if (pa[i] != pb[i]) {
+         return (pa[i] < pb[i]) ? -1 : 1;
+      }
+   }
+   return 0;
+}
+
 size_t strlen(const char *s)
 {
    const char *p = s;

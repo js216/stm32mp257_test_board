@@ -14,7 +14,13 @@
 
 #include "cmd.h"
 #include "console.h"
+#include "ddr.h"
+#include "pmic.h"
 #include "printf.h"
+#include "rcc.h"
+#include "sd.h"
+#include "uart.h"
+#include "usb_msc.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,10 +54,50 @@ static const struct cmd cmd_list[] = {
      .num_defaults = 0,
      .handler      = cmd_help,
      },
+
+    {
+     .name         = "pmic",
+     .syntax       = "",
+     .summary      = "Show STPMIC2 id and the state of every rail",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_pmic,
+     },
+    {
+     .name         = "ddr",
+     .syntax       = "",
+     .summary      = "Initialise LPDDR4 (PLL2, controller, PHY training) and test it",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_ddr,
+     },
+    {
+     .name         = "sd",
+     .syntax       = "",
+     .summary      = "Initialise the SD card and read the MBR",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_sd,
+     },
+    {
+     .name         = "sdw",
+     .syntax       = "",
+     .summary      = "Test SD write on the last block (save/verify/restore)",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_sdw,
+     },
+    {
+     .name         = "usb",
+     .syntax       = "",
+     .summary      = "Export the SD card as a USB mass-storage device",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_usb,
+     },
     /*
      * Re-enabled as their drivers are ported in later steps:
-     *   reset, print_ddr, align_test (step 4: ddr)
-     *   load_sd, two, mbr_load       (step 5: sd)
+     *   load_sd, two, mbr_load       (step 5: sd, remaining)
      *   jump, diag                   (step 7: boot)
      */
 };
@@ -212,6 +258,12 @@ static void execute_command(void)
 
    for (size_t i = 0; i < CMD_COUNT; i++) {
       if (strncmp(line_buf, cmd_list[i].name, cmd_len) == 0) {
+         /* An exact name match always wins over prefix matches. */
+         if (cmd_list[i].name[cmd_len] == '\0') {
+            found = 1;
+            match = &cmd_list[i];
+            break;
+         }
          found++;
          match = &cmd_list[i];
       }
@@ -361,5 +413,145 @@ void cmd_help(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
       my_printf("  %s %s\r\n", c->name, c->syntax);
       my_printf("    %s\r\n", c->summary);
       my_printf("\r\n");
+   }
+}
+
+void cmd_pmic(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
+{
+   (void)argc;
+   (void)arg1;
+   (void)arg2;
+   (void)arg3;
+
+   uint8_t id  = 0;
+   uint8_t ver = 0;
+
+   if (pmic_read(0x00, &id) != 0 || pmic_read(0x01, &ver) != 0) {
+      my_printf("PMIC: I2C error\r\n");
+      return;
+   }
+
+   my_printf("PMIC product_id=0x%02X version=0x%02X\r\n",
+             (unsigned int)id, (unsigned int)ver);
+   pmic_print_rails();
+}
+
+void cmd_sd(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
+{
+   (void)argc;
+   (void)arg1;
+   (void)arg2;
+   (void)arg3;
+
+   static int done = 0;
+   static uint8_t mbr[512] __attribute__((aligned(512)));
+
+   if (!done) {
+      if (sd_init() != 0) {
+         my_printf("SD init FAILED\r\n");
+         return;
+      }
+      done = 1;
+   }
+
+   if (sd_read(0, (uintptr_t)mbr, sizeof(mbr)) != 0) {
+      my_printf("SD read FAILED\r\n");
+      return;
+   }
+
+   my_printf("SD %u MB, MBR sig %02X%02X%s\r\n",
+             (unsigned int)(sd_size_bytes() / (1024ULL * 1024ULL)),
+             mbr[510], mbr[511],
+             ((mbr[510] == 0x55U) && (mbr[511] == 0xAAU)) ? " OK" : " BAD");
+}
+
+void cmd_sdw(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
+{
+   (void)argc;
+   (void)arg1;
+   (void)arg2;
+   (void)arg3;
+
+   static uint8_t saved[512] __attribute__((aligned(512)));
+   static uint8_t patt[512] __attribute__((aligned(512)));
+   static uint8_t back[512] __attribute__((aligned(512)));
+
+   if (sd_size_bytes() == 0ULL) {
+      if (sd_init() != 0) {
+         my_printf("SD init FAILED\r\n");
+         return;
+      }
+   }
+
+   unsigned int last = (unsigned int)(sd_size_bytes() / 512ULL) - 1U;
+
+   if (sd_read(last, (uintptr_t)saved, 512) != 0) {
+      my_printf("SD WRITE: save read FAILED\r\n");
+      return;
+   }
+   for (unsigned int i = 0; i < 512U; i++) {
+      patt[i] = (uint8_t)(i ^ 0xA5U);
+   }
+   if (sd_write(last, (uintptr_t)patt, 512) != 0) {
+      my_printf("SD WRITE: write FAILED\r\n");
+      return;
+   }
+   if (sd_read(last, (uintptr_t)back, 512) != 0) {
+      my_printf("SD WRITE: readback FAILED\r\n");
+      return;
+   }
+   int ok = (memcmp(patt, back, 512) == 0);
+   if (sd_write(last, (uintptr_t)saved, 512) != 0) {
+      my_printf("SD WRITE: restore FAILED\r\n");
+      return;
+   }
+   my_printf("SD WRITE %s (block %u)\r\n", ok ? "OK" : "MISMATCH", last);
+}
+
+void cmd_usb(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
+{
+   (void)argc;
+   (void)arg1;
+   (void)arg2;
+   (void)arg3;
+
+   if (usb_msc_start() != 0) {
+      my_printf("USB start FAILED\r\n");
+      return;
+   }
+   my_printf("USB MSC up; any key to stop\r\n");
+
+   /* The main loop is not running here: poll the UART directly. */
+   while (!uart_rx_ready()) {
+      usb_msc_poll();
+   }
+   (void)uart_getc_raw();
+
+   my_printf("USB MSC stopped (rd %lu wr %lu blocks, setup %lu init %lu)\r\n",
+             msc_read_count, msc_write_count, msc_setup_count,
+             msc_init_count);
+}
+
+void cmd_ddr(int argc, uint32_t arg1, uint32_t arg2, uint32_t arg3)
+{
+   (void)argc;
+   (void)arg1;
+   (void)arg2;
+   (void)arg3;
+
+   static int done = 0;
+
+   if (done) {
+      my_printf("DDR already initialised (%u MB)\r\n",
+                (unsigned int)(ddr_get_size() / (1024U * 1024U)));
+      return;
+   }
+
+   if (ddr_init() == 0) {
+      done = 1;
+      my_printf("DDR OK\r\n");
+   } else {
+      my_printf("DDR FAILED\r\n");
+      rcc_pll2_dump();
    }
 }

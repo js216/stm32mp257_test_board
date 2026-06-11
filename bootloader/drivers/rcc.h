@@ -18,4 +18,20 @@
  */
 void rcc_clock_init(void);
 
+/**
+ * @brief Bring up PLL2 (DDR clock) at 600 MHz from the 40 MHz HSE.
+ *
+ * Follows TF-A's integer-mode PLL sequence with the STM32MP257F-DK divider
+ * set (FBDIV 30, FREFDIV 1, POSTDIV 1*2).
+ *
+ * @return 0 once the PLL reports lock, -1 on timeout.
+ */
+int rcc_pll2_init(void);
+
+/** Route the SDMMC1 kernel clock (flexgen channel 51) to HSI 64 MHz. */
+void rcc_sdmmc1_clk_init(void);
+
+/** Print the PLL2-related RCC registers (diagnostic). */
+void rcc_pll2_dump(void);
+
 #endif // RCC_H
