@@ -6,12 +6,11 @@
  * @copyright 2025-2026 Jakob Kastelic
  *
  * Ported from the stm32mp135_test_board bootloader. The line editor (history,
- * tab completion, escape handling) is preserved verbatim; only the command
- * table is trimmed to the commands implemented so far. The hardware commands
- * (reset, ddr, sd, jump, diag, ...) are re-enabled as their drivers land in
- * later steps -- see the commented block in cmd_list[].
+ * tab completion, escape handling) is preserved verbatim; the command table
+ * is the MP257 set: pmic, ddr, sd, sdw, usb, load_sd, jump.
  */
 
+#include "boot.h"
 #include "cmd.h"
 #include "console.h"
 #include "ddr.h"
@@ -95,11 +94,30 @@ static const struct cmd cmd_list[] = {
      .num_defaults = 0,
      .handler      = cmd_usb,
      },
-    /*
-     * Re-enabled as their drivers are ported in later steps:
-     *   load_sd, two, mbr_load       (step 5: sd, remaining)
-     *   jump, diag                   (step 7: boot)
-     */
+    {
+     .name         = "load_sd",
+     .syntax       = "[len_blocks [sd_block [dest_addr]]]",
+     .summary      = "Load blocks from SD into memory (default: kernel image)",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_load_sd,
+     },
+    {
+     .name         = "jump",
+     .syntax       = "[target_addr]",
+     .summary      = "Call a loaded bare program (EL3)",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_jump,
+     },
+    {
+     .name         = "boot",
+     .syntax       = "[kernel_blocks]",
+     .summary      = "Load Linux + dtb from SD staging and boot (EL2, PSCI at EL3)",
+     .defaults     = NULL,
+     .num_defaults = 0,
+     .handler      = cmd_boot,
+     },
 };
 
 #define CMD_COUNT (sizeof(cmd_list) / sizeof(cmd_list[0]))

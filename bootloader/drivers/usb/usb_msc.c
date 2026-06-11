@@ -31,8 +31,11 @@
 #define MSC_EP_NUM  1U
 #define MSC_MPS_HS  512U
 
+/* Bench contract (test_serv msc.mp257 instance): VID/PID match the MP135
+ * baremetal-MSC bootloaders (0x0483:0x571d); the iSerial disambiguates the
+ * boards. */
 #define USBD_VID 0x0483U
-#define USBD_PID 0x5720U /* ST mass storage */
+#define USBD_PID 0x571DU /* baremetal MSC bootloader function */
 
 #define CBW_SIGNATURE 0x43425355U
 #define CSW_SIGNATURE 0x53425355U
@@ -471,7 +474,11 @@ static uint8_t *msc_get_product_desc(uint16_t *length)
 
 static uint8_t *msc_get_serial_desc(uint16_t *length)
 {
-   return msc_string_desc("MP257FSBL000", length);
+   /* The chip UID, exactly as the ROM's DFU iSerial presents it. The bench
+    * matches msc.mp257 on this string. Hardcoded for now -- the proper
+    * source is BSEC OTP, but the ROM does not shadow a readable copy and a
+    * BSEC driver is not worth it for a single string. */
+   return msc_string_desc("002600224C42501400313951", length);
 }
 
 static uint8_t *msc_get_configuration_desc(uint16_t *length)
