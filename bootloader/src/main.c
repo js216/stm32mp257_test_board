@@ -78,6 +78,15 @@ int main(void)
              (unsigned int)timer_freq_hz(), ms,
              ((ms >= 80U) && (ms <= 95U)) ? "OK" : "BAD");
 
+   /* The ROM leaves the cluster on its slow bypass clock and nothing on
+    * the lean image can raise it: do it here. */
+   int a35 = rcc_a35_pll1_init();
+   if (a35 == 0) {
+      my_printf("A35 @ 1200 MHz\r\n");
+   } else {
+      my_printf("A35 PLL1 FAILED (%d), staying on bypass clock\r\n", a35);
+   }
+
    cmd_init();
 
    unsigned int tick = 0;

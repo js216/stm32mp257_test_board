@@ -63,10 +63,26 @@ non-fatal probe-time timeout, needed because no bootloader pre-locks the PLL).
  #define STM32MP25_RIFRCC_MCO2_ID	109
  #define STM32MP25_RIFRCC_OSPI1_ID	110
  #define STM32MP25_RIFRCC_OSPI2_ID	111
-@@ -1221,6 +1234,84 @@
+@@ -1221,6 +1234,100 @@
  	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_is2m", ICN_APB3, &clk_stm32_gate_ops, 0),
  };
  
++/* HPDMA bus clocks (no RIF check: the FSBL leaves the RCC resources open) */
++static struct clk_stm32_gate ck_icn_p_hpdma1 = {
++	.gate_id = GATE_HPDMA1,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_hpdma1", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_hpdma2 = {
++	.gate_id = GATE_HPDMA2,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_hpdma2", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
++static struct clk_stm32_gate ck_icn_p_hpdma3 = {
++	.gate_id = GATE_HPDMA3,
++	.hw.init = CLK_HW_INIT_INDEX("ck_icn_p_hpdma3", ICN_LS_MCU, &clk_stm32_gate_ops, 0),
++};
++
 +/* GPIO and IPCC2 */
 +static struct clk_stm32_gate ck_icn_p_ipcc2 = {
 +	.gate_id = GATE_IPCC2,
@@ -148,10 +164,13 @@ non-fatal probe-time timeout, needed because no bootloader pre-locks the PLL).
  /* IWDG */
  static struct clk_stm32_gate ck_icn_p_iwdg1 = {
  	.gate_id = GATE_IWDG1,
-@@ -2004,6 +2095,21 @@
+@@ -2004,6 +2111,24 @@
  	STM32_GATE_CFG(CK_BUS_CRYP2, ck_icn_p_cryp2, SEC_RIFSC(97)),
  	STM32_GATE_CFG(CK_BUS_SAES, ck_icn_p_saes, SEC_RIFSC(94)),
  	STM32_GATE_CFG(CK_BUS_PKA, ck_icn_p_pka, SEC_RIFSC(93)),
++	STM32_GATE_CFG(CK_BUS_HPDMA1, ck_icn_p_hpdma1, SECF_NONE),
++	STM32_GATE_CFG(CK_BUS_HPDMA2, ck_icn_p_hpdma2, SECF_NONE),
++	STM32_GATE_CFG(CK_BUS_HPDMA3, ck_icn_p_hpdma3, SECF_NONE),
 +	STM32_GATE_CFG(CK_BUS_IPCC2, ck_icn_p_ipcc2, SEC_RIFRCC(IPCC2)),
 +	STM32_GATE_CFG(CK_IPCC2_AM, ck_icn_p_ipcc2_am, SEC_RIFRCC(IPCC2)),
 +	STM32_GATE_CFG(CK_BUS_GPIOA, ck_icn_p_gpioa, SEC_RIFRCC(GPIOA)),

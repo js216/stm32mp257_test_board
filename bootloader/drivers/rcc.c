@@ -86,9 +86,44 @@
 #define PLL_CFGR6_POSTDIV1_MASK 0x00000007UL
 #define PLL_CFGR7_POSTDIV2_MASK 0x00000007UL
 
+#define MUXSEL5_SHIFT 20U /* PLL1 (A35) source select, 2 bits */
+#define MUXSEL5_MASK  (0x3UL << MUXSEL5_SHIFT)
 #define MUXSEL6_SHIFT 24U /* PLL2 source select, 2 bits */
 #define MUXSEL6_MASK  (0x3UL << MUXSEL6_SHIFT)
 #define MUXSEL_HSE    1UL
+
+/*
+ * A35 sub-system PLL (PLL1): the CPU cluster manages its own PLL through
+ * the A35SSC registers, not the RCC PLLxCFGR block. Registers, bits and
+ * the bypass->config->lock->switch sequence from TF-A clk-stm32mp2.c.
+ * The DK clock tree runs it at 1200 MHz from HSE: cfg = <30 1 1 1>.
+ * Without this the cores stay on the ROM's bypass clock and Linux has no
+ * way to raise it (the kernel's ca35ss driver only proxies via SIP SMC).
+ */
+#define A35SSC_BASE       0x48800000UL
+#define A35_SS_CHGCLKREQ  (A35SSC_BASE + 0x00UL)
+#define A35_SS_PLL_FREQ1  (A35SSC_BASE + 0x80UL)
+#define A35_SS_PLL_FREQ2  (A35SSC_BASE + 0x90UL)
+#define A35_SS_PLL_ENABLE (A35SSC_BASE + 0xA0UL)
+
+#define A35_CHGCLKREQ_REQ     BIT(0)
+#define A35_CHGCLKREQ_ACK     BIT(1)
+#define A35_CHGCLKREQ_DIVSEL  BIT(16)
+#define A35_CHGCLKREQ_DIVSELACK BIT(17)
+
+#define A35_PLL_ENABLE_PD               BIT(0)
+#define A35_PLL_ENABLE_LOCKP            BIT(1)
+#define A35_PLL_ENABLE_NRESET_SWPLL_FF  BIT(2)
+
+#define A35_PLL_FREQ1_FBDIV_MASK  0x00000FFFUL
+#define A35_PLL_FREQ1_REFDIV_MASK 0x003F0000UL
+#define A35_PLL_FREQ2_POSTDIV1_MASK 0x00000007UL
+#define A35_PLL_FREQ2_POSTDIV2_MASK 0x00000038UL
+
+#define A35_PLL_FBDIV    30U /* 40 MHz HSE * 30 / (1*1*1) = 1200 MHz */
+#define A35_PLL_REFDIV   1U
+#define A35_PLL_POSTDIV1 1U
+#define A35_PLL_POSTDIV2 1U
 
 #define PLL2_FBDIV    30U
 #define PLL2_FREFDIV  1U
@@ -201,6 +236,83 @@ int rcc_pll2_init(void)
    while ((mmio_read_32(RCC_PLL2CFGR1) & PLL_CFGR1_PLLRDY) == 0U) {
       if (--n == 0U) {
          return -4; /* no lock */
+      }
+   }
+
+   return 0;
+}
+
+/*
+ * Raise the A35 cluster to 1200 MHz (TF-A _clk_stm32_pll1_init sequence):
+ * park the cluster on the bypass clock, point MUXSEL5 at HSE, program the
+ * dividers, power the PLL up, wait for lock and switch the cluster over.
+ * Returns 0 on success; the cluster stays on the bypass clock on error.
+ */
+int rcc_a35_pll1_init(void)
+{
+   unsigned int n;
+
+   /* HSE on (already up if PLL2 ran first; cheap to repeat). */
+   mmio_setbits_32(RCC_OCENSETR, OCEN_HSEON);
+   n = DIV_TIMEOUT;
+   while ((mmio_read_32(RCC_OCRDYR) & OCRDY_HSERDY) == 0U) {
+      if (--n == 0U) {
+         return -1;
+      }
+   }
+
+   /* Switch the cluster to the bypass clock while we touch the PLL. */
+   if ((mmio_read_32(A35_SS_CHGCLKREQ) & A35_CHGCLKREQ_ACK) == 0U) {
+      if ((mmio_read_32(A35_SS_CHGCLKREQ) & A35_CHGCLKREQ_DIVSEL) != 0U) {
+         mmio_clrbits_32(A35_SS_CHGCLKREQ, A35_CHGCLKREQ_DIVSEL);
+         n = DIV_TIMEOUT;
+         while ((mmio_read_32(A35_SS_CHGCLKREQ) &
+                 A35_CHGCLKREQ_DIVSELACK) != 0U) {
+            if (--n == 0U) {
+               return -2;
+            }
+         }
+      }
+
+      mmio_setbits_32(A35_SS_CHGCLKREQ, A35_CHGCLKREQ_REQ);
+      n = DIV_TIMEOUT;
+      while ((mmio_read_32(A35_SS_CHGCLKREQ) & A35_CHGCLKREQ_ACK) == 0U) {
+         if (--n == 0U) {
+            return -3;
+         }
+      }
+   }
+   mmio_clrbits_32(A35_SS_PLL_ENABLE, A35_PLL_ENABLE_NRESET_SWPLL_FF);
+
+   /* PLL1 reference = HSE. */
+   mmio_clrsetbits_32(RCC_MUXSELCFGR, MUXSEL5_MASK,
+                      MUXSEL_HSE << MUXSEL5_SHIFT);
+
+   /* Dividers: 40 MHz * 30 / (1 * 1 * 1) = 1200 MHz. */
+   mmio_clrsetbits_32(A35_SS_PLL_FREQ1, A35_PLL_FREQ1_REFDIV_MASK,
+                      (A35_PLL_REFDIV << 16) & A35_PLL_FREQ1_REFDIV_MASK);
+   mmio_clrsetbits_32(A35_SS_PLL_FREQ1, A35_PLL_FREQ1_FBDIV_MASK,
+                      A35_PLL_FBDIV & A35_PLL_FREQ1_FBDIV_MASK);
+   mmio_clrsetbits_32(A35_SS_PLL_FREQ2, A35_PLL_FREQ2_POSTDIV1_MASK,
+                      A35_PLL_POSTDIV1);
+   mmio_clrsetbits_32(A35_SS_PLL_FREQ2, A35_PLL_FREQ2_POSTDIV2_MASK,
+                      (A35_PLL_POSTDIV2 << 3) & A35_PLL_FREQ2_POSTDIV2_MASK);
+
+   /* Power up, wait for lock, release the output, switch the cluster. */
+   mmio_setbits_32(A35_SS_PLL_ENABLE, A35_PLL_ENABLE_PD);
+   n = DIV_TIMEOUT;
+   while ((mmio_read_32(A35_SS_PLL_ENABLE) & A35_PLL_ENABLE_LOCKP) == 0U) {
+      if (--n == 0U) {
+         return -4;
+      }
+   }
+   mmio_setbits_32(A35_SS_PLL_ENABLE, A35_PLL_ENABLE_NRESET_SWPLL_FF);
+
+   mmio_clrbits_32(A35_SS_CHGCLKREQ, A35_CHGCLKREQ_REQ);
+   n = DIV_TIMEOUT;
+   while ((mmio_read_32(A35_SS_CHGCLKREQ) & A35_CHGCLKREQ_ACK) != 0U) {
+      if (--n == 0U) {
+         return -5;
       }
    }
 

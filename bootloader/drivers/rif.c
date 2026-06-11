@@ -74,6 +74,13 @@
 /* RISAF4 (DDR) */
 #define RISAF4_BASE 0x420D0000UL
 
+/* HPDMA1-3: RIF config lives inside the DMA IP, per channel. */
+#define HPDMA_CHANNELS    16U
+#define HPDMA_SECCFGR     0x00UL
+#define HPDMA_PRIVCFGR    0x04UL
+#define HPDMA_CCIDCFGR(x) (0x54UL + 0x80UL * (x))
+#define HPDMA_CID1_STATIC 0x11U /* CFEN | SCID=CID1 */
+
 static const uint32_t rimc_attr_val[16] = {
    0x214U, 0x200U, 0x200U, 0x000U,
    0x200U, 0x200U, 0x200U, 0x200U,
@@ -84,6 +91,12 @@ static const uint32_t rimc_attr_val[16] = {
 struct gpio_bank_cfg {
    uintptr_t base;
    uintptr_t rcc_cfgr; /* RCC_GPIOxCFGR: bit1 = clock enable */
+};
+
+static const struct gpio_bank_cfg hpdma_insts[] = {
+   {0x40400000UL, RCC_BASE + 0x55CUL}, /* HPDMA1 */
+   {0x40410000UL, RCC_BASE + 0x560UL}, /* HPDMA2 */
+   {0x40420000UL, RCC_BASE + 0x564UL}, /* HPDMA3 */
 };
 
 static const struct gpio_bank_cfg gpio_banks[] = {
@@ -192,6 +205,22 @@ void rif_handoff(void)
 
       mmio_write_32(gpio_banks[i].base + GPIO_SECCFGR, 0U);
       mmio_write_32(gpio_banks[i].base + GPIO_PRIVCFGR, 0U);
+   }
+
+   /*
+    * HPDMA1-3 channels: non-secure, static CID1, so the kernel's
+    * stm32-dma3 driver accepts them (it reserves any channel that is
+    * secure, !CID-filtered or owned by another CID).
+    */
+   for (i = 0; i < sizeof(hpdma_insts) / sizeof(hpdma_insts[0]); i++) {
+      mmio_setbits_32(hpdma_insts[i].rcc_cfgr, BIT(1));
+
+      mmio_write_32(hpdma_insts[i].base + HPDMA_SECCFGR, 0U);
+      mmio_write_32(hpdma_insts[i].base + HPDMA_PRIVCFGR, 0U);
+      for (p = 0; p < HPDMA_CHANNELS; p++) {
+         mmio_write_32(hpdma_insts[i].base + HPDMA_CCIDCFGR(p),
+                       HPDMA_CID1_STATIC);
+      }
    }
 
    /* TAMP: keep the audited backup-register zoning, no CID filtering */

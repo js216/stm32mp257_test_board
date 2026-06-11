@@ -118,7 +118,8 @@ static int drm_init(const char *path)
 	if (create_fb(&bufs[0]) || create_fb(&bufs[1])) {
 		fprintf(stderr, "dumb buffer alloc failed: %s\n", strerror(errno)); return -1;
 	}
-	fprintf(stderr, "DRM: conn %u crtc %u %dx%d, pitch %u\n", conn_id, crtc_id, W, H, bufs[0].pitch);
+	fprintf(stderr, "DRM: conn %u crtc %u %dx%d@%u, pitch %u\n", conn_id, crtc_id, W, H,
+	        mode.vrefresh, bufs[0].pitch);
 	return 0;
 }
 
@@ -306,9 +307,13 @@ int main(int argc, char **argv)
 	drmEventContext ev = { .version = 2, .page_flip_handler = flip_handler };
 	struct pollfd pfd = { .fd = drm_fd, .events = POLLIN };
 
+	unsigned frames = 0;
+	double tfps = now_sec(), tdraw = 0.0;
 	while (running) {
 		int back = front ^ 1;
-		draw(&bufs[back], now_sec() - t0);
+		double td0 = now_sec();
+		draw(&bufs[back], td0 - t0);
+		tdraw += now_sec() - td0;
 		int waiting = 1;
 		if (drmModePageFlip(drm_fd, crtc_id, bufs[back].fb_id, DRM_MODE_PAGE_FLIP_EVENT, &waiting)) {
 			fprintf(stderr, "page flip failed: %s\n", strerror(errno)); break;
@@ -316,6 +321,13 @@ int main(int argc, char **argv)
 		while (waiting && running)
 			if (poll(&pfd, 1, 1000) > 0) drmHandleEvent(drm_fd, &ev);
 		front = back;
+
+		if (++frames == 30) {
+			double t = now_sec();
+			fprintf(stderr, "FPS %.1f (draw %.1f ms/frame)\n",
+			        frames / (t - tfps), 1e3 * tdraw / frames);
+			frames = 0; tfps = t; tdraw = 0.0;
+		}
 	}
 
 	if (orig_crtc)

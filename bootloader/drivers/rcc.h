@@ -28,6 +28,17 @@ void rcc_clock_init(void);
  */
 int rcc_pll2_init(void);
 
+/**
+ * @brief Raise the A35 cluster to 1200 MHz via its own PLL1 (A35SSC),
+ *        following TF-A's bypass -> configure -> lock -> switch sequence.
+ *        Neither the boot ROM nor the lean Linux raises the CPU clock
+ *        (the kernel ca35ss driver only proxies SIP SMCs).
+ *
+ * @return 0 on success; negative with the cluster left on the bypass
+ *         clock on timeout.
+ */
+int rcc_a35_pll1_init(void);
+
 /** Route the SDMMC1 kernel clock (flexgen channel 51) to HSI 64 MHz. */
 void rcc_sdmmc1_clk_init(void);
 

@@ -229,13 +229,16 @@
 			label = "User-3";
 			linux,code = <BTN_3>;
 			gpios = <&gpioz 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-			status = "okay";
+			/* gpioz button: suspect for the old probe -EINVAL, parked */
+			status = "disabled";
 		};
 
 		button-wake-up {
 			label = "wake-up";
 			linux,code = <KEY_WAKEUP>;
-			interrupts-extended = <&pwr 0 IRQ_TYPE_EDGE_FALLING 0>;
+			/* third cell = WKUP_PULL_UP: the TAMP button shorts the
+			 * wakeup pin to ground; OP-TEE used to set this pull. */
+			interrupts-extended = <&pwr 0 IRQ_TYPE_EDGE_FALLING 1>;
 			wakeup-source;
 			status = "okay";
 		};
@@ -589,7 +592,8 @@
 };
 
 &ipcc1 {
-	status = "okay";
+	/* no Cortex-M33 firmware on the lean image */
+	status = "disabled";
 };
 
 &ipcc2 {
@@ -677,7 +681,8 @@
 			<&vdev0vring1>, <&vdev0buffer>,
 			<&cm33_sram2>;
 	st,syscfg-nsvtor = <&a35ss_syscfg 0xa8 0xffffff80>;
-	status = "okay";
+	/* no Cortex-M33 firmware on the lean image */
+	status = "disabled";
 };
 
 &mdf1 {

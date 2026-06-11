@@ -43,18 +43,13 @@
 			};
 		};
 
-		idle-states {
-			entry-method = "psci";
-
-			CPU_PWRDN: cpu-power-down {
-				compatible = "arm,idle-state";
-				arm,psci-suspend-param = <0x00000001>;
-				local-timer-stop;
-				entry-latency-us = <150>;
-				exit-latency-us = <200>;
-				min-residency-us = <1000>;
-			};
-		};
+		/*
+		 * No cpu idle-states: the FSBL's PSCI has no CPU_SUSPEND, and
+		 * advertising the state makes the kernel attempt (and fail) a
+		 * deep-idle SMC on every idle period. WFI idle only. The psci
+		 * power-domain nodes below MUST stay: ret_pd supplies exti1
+		 * (console irq parent) via fw_devlink.
+		 */
 
 		domain-idle-states {
 			STOP1: domain-stop1 {
@@ -308,7 +303,6 @@
 
 		cpu0_pd: power-domain-cpu0 {
 			#power-domain-cells = <0>;
-			domain-idle-states = <&CPU_PWRDN>;
 			power-domains = <&cluster_pd>;
 		};
 
@@ -2554,6 +2548,7 @@
 			clocks = <&rcc CK_ICN_LS_MCU>;
 			st,mem-map = <0xa000000 0x20000>;
 			#access-controller-cells = <1>;
+			status = "disabled";
 		};
 
 		risab2: risab@42100000 {
@@ -2562,6 +2557,7 @@
 			clocks = <&rcc CK_ICN_LS_MCU>;
 			st,mem-map = <0xa020000 0x20000>;
 			#access-controller-cells = <1>;
+			status = "disabled";
 		};
 
 		risab3: risab@42110000 {
@@ -2570,6 +2566,7 @@
 			clocks = <&rcc CK_ICN_LS_MCU>;
 			st,mem-map = <0xa040000 0x20000>;
 			#access-controller-cells = <1>;
+			status = "disabled";
 		};
 
 		risab4: risab@42120000 {
@@ -2578,6 +2575,7 @@
 			clocks = <&rcc CK_ICN_LS_MCU>;
 			st,mem-map = <0xa060000 0x20000>;
 			#access-controller-cells = <1>;
+			status = "disabled";
 		};
 
 		risab5: risab@42130000 {
@@ -2586,6 +2584,7 @@
 			clocks = <&rcc CK_ICN_LS_MCU>;
 			st,mem-map = <0xa080000 0x20000>;
 			#access-controller-cells = <1>;
+			status = "disabled";
 		};
 
 		risab6: risab@42140000 {
@@ -2600,6 +2599,8 @@
 		bsec: efuse@44000000 {
 			compatible = "st,stm32mp25-bsec";
 			reg = <0x44000000 0x1000>;
+			/* needs the (removed) OP-TEE BSEC service */
+			status = "disabled";
 			#address-cells = <1>;
 			#size-cells = <1>;
 
@@ -3014,6 +3015,7 @@
 
 			reboot_mode: reboot-mode {
 				compatible = "nvmem-reboot-mode";
+				status = "disabled";
 				nvmem-cells = <&boot_mode>;
 				nvmem-cell-names = "reboot-mode";
 				mode-normal = <0x00>;
